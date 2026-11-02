@@ -61,7 +61,7 @@ containers/             one Containerfile per architecture: engine.sm60.Containe
 recipes/                <model>/<card>.toml, plus the schema; embedded into the launcher at build time
 go.mod, cmd/, internal/ the tensorless CLI (Go); recipes_embed.go embeds recipes/
 docs/                   design, the PN format, the launcher, receipts
-.github/workflows/      engine-image.yml (images on engine-v* tags), launcher.yml (tests; archives on v* tags)
+.github/workflows/      engine-image.yml (release-candidate images), engine-promote.yml (a measured digest gets its release tag), launcher.yml (tests; archives on v* tags)
 ```
 
 ## The launcher
@@ -135,7 +135,7 @@ Some tuned models are a small change to another publisher's file. The UD-IQ3_XXS
 - **The image holds** `llama-server` and its libraries, `LICENSE`, `NOTICE`, `LICENSES/`, `THIRD_PARTY_NOTICES.md`, `VERSION` and `SHA256SUMS`. It holds no model weights and no build tree.
 - **Portable CPU code.** The release build uses `GGML_NATIVE=OFF`, so the CPU side does not depend on the builder's CPU. The research build used `GGML_NATIVE=ON`; that must not ship.
 - **The CUDA side keeps the measured configuration:** `CMAKE_CUDA_ARCHITECTURES=60-real`, flash attention on with the measured KV-quant set, CUDA graphs off, and no VMM.
-- **CI builds each image once, from the tag.** The release gate measures that exact digest. Publishing a digest that the gate did not measure is not allowed.
+- **CI builds each release candidate once** (`X.Y.Z-rcN-<arch>`). The release gate measures that exact digest, and `engine-promote.yml` then gives the same digest its release tag (`X.Y.Z-<arch>`) without rebuilding, so the release is byte for byte what was measured.
 
 ## Releases and merging champions
 
@@ -149,7 +149,7 @@ Hill-climb campaigns run in the research repository with an automated harness. E
    - speed no worse than any merged champion, within measured noise;
    - decode at the long contexts (32K and 65K on the P100) and prefill;
    - the model's quality checks, once per release.
-4. **If the gate passes:** tag `engine-vX.Y.Z`, publish the measured digest, write the receipts, and move the recipes in one pull request.
+4. **If the gate passes:** promote the measured digest to its release tag, tag the source `engine-vX.Y.Z`, write the receipts, and move the recipes in one pull request.
 5. **If a change helps one model and fails another's check,** the failing model's recipe stays on the previous release, and the conflict is recorded in the release notes.
 
 The engine source arrives here as one snapshot commit per release, exported from the research repository by its export tool. The export:
@@ -159,7 +159,7 @@ The engine source arrives here as one snapshot commit per release, exported from
 - refuses to finish if a scan finds a lab-only term (hostnames, network names, private repository names, credentials) in any file, or a home path or personal name in any file that differs from the public upstream base;
 - writes `engine/PROVENANCE.md`: the upstream base, the research commit, the tree digest, what was removed and rewritten, and known issues.
 
-The image build is CI's: `.github/workflows/engine-image.yml` builds `containers/engine.<arch>.Containerfile` on an `engine-v*` tag (or by hand, for release candidates) and prints the digest to pin.
+The image build is CI's: `.github/workflows/engine-image.yml` builds `containers/engine.<arch>.Containerfile` as a release candidate and prints the digest to pin; `engine-promote.yml` retags a measured digest for release, and verifies that the tag points at it.
 
 ## Licensing
 

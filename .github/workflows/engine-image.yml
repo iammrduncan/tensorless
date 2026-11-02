@@ -1,18 +1,15 @@
 name: engine-image
 
-# Builds one engine image per architecture and publishes it to GHCR.
-# A tag engine-vX.Y.Z publishes ghcr.io/<owner>/tensorless-engine:X.Y.Z-sm60.
-# A manual run publishes the version you give it (use a -dev or -rc suffix for anything unreleased).
-# The digest printed in the job summary is what recipes pin; publish a recipe only after the
-# release gate has measured that exact digest.
+# Builds an engine release candidate for one architecture and publishes it to GHCR as
+# ghcr.io/<owner>/tensorless-engine:<version>-sm60, e.g. 0.1.0-rc1-sm60. The digest printed in the
+# job summary is what recipes pin. A release is never rebuilt: once the release gate has measured
+# a candidate's digest, engine-promote.yml gives that same digest its release tag (X.Y.Z-sm60).
 
 on:
-  push:
-    tags: ["engine-v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Image version label, e.g. 0.1.0-rc1"
+        description: "Candidate version label, e.g. 0.1.0-rc2"
         required: true
 
 permissions:
@@ -40,7 +37,7 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then v="${GITHUB_REF_NAME#engine-v}"; else v="$INPUT_VERSION"; fi
+          v="$INPUT_VERSION"
           case "$v" in ''|*[!0-9A-Za-z.-]*) echo "bad version: '$v'"; exit 1;; esac
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tensorless-engine" >> "$GITHUB_OUTPUT"

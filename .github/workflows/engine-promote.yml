@@ -1,0 +1,56 @@
+name: engine-promote
+
+# Promotes a measured engine image to a release tag without rebuilding it:
+# the release tag points at exactly the digest the release gate measured.
+#   gh workflow run engine-promote.yml -f digest=sha256:... -f version=0.1.0 -f arch=sm60
+
+on:
+  workflow_dispatch:
+    inputs:
+      digest:
+        description: "Measured image digest, sha256:<64 hex>"
+        required: true
+      version:
+        description: "Release version, e.g. 0.1.0"
+        required: true
+      arch:
+        description: "Architecture suffix, e.g. sm60"
+        required: true
+        default: sm60
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check inputs
+        env:
+          DIGEST: ${{ inputs.digest }}
+          VERSION: ${{ inputs.version }}
+          ARCH: ${{ inputs.arch }}
+        run: |
+          echo "$DIGEST" | grep -Eq '^sha256:[0-9a-f]{64}$' || { echo "bad digest: $DIGEST"; exit 1; }
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "bad version: $VERSION"; exit 1; }
+          echo "$ARCH" | grep -Eq '^sm[0-9]+$' || { echo "bad arch: $ARCH"; exit 1; }
+
+      - name: Retag without rebuilding
+        env:
+          DIGEST: ${{ inputs.digest }}
+          VERSION: ${{ inputs.version }}
+          ARCH: ${{ inputs.arch }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          repo="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tensorless-engine"
+          echo "$TOKEN" | skopeo login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          skopeo copy --all --preserve-digests "docker://$repo@$DIGEST" "docker://$repo:$VERSION-$ARCH"
+          got="sha256:$(skopeo inspect --raw "docker://$repo:$VERSION-$ARCH" | sha256sum | cut -d' ' -f1)"
+          [ "$got" = "$DIGEST" ] || { echo "tag $VERSION-$ARCH points at $got, not $DIGEST"; exit 1; }
+          {
+            echo "### tensorless-engine $VERSION-$ARCH"
+            echo
+            echo "Promoted without rebuilding: \`$repo:$VERSION-$ARCH\` = \`$repo@$DIGEST\`."
+          } >> "$GITHUB_STEP_SUMMARY"
