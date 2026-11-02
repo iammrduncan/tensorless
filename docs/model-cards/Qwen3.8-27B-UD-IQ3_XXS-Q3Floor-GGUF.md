@@ -13,6 +13,8 @@ tags:
 
 # Qwen3.8-27B-UD-IQ3_XXS-Q3Floor (GGUF)
 
+**Join us on [Discord](https://discord.gg/3Qs2uejUf9)**: questions, results from your own P100, and ideas.
+
 [Unsloth](https://huggingface.co/unsloth)'s `UD-IQ3_XXS` quantization of [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) with a **3-bit floor**: every weight tensor is at 3 bits or more. Unsloth's file stores 91 tensors below 3 bits. This one raises them to IQ3_XXS and changes nothing else.
 
 It uses only standard llama.cpp quantization types, so it loads in stock llama.cpp. It is also a tuned launch target of [tensorless](https://github.com/iammrduncan/tensorless) on the NVIDIA Tesla P100:
@@ -49,10 +51,6 @@ On one Tesla P100 with the tensorless engine (engine-v0.1.0's source, greedy dec
 |---|---:|
 | Decode, 256 tokens after a ~600-token prompt | 26.3 |
 | Decode, 1,024 tokens after a 32K / 65K prompt | 24.5 / 22.9 |
-
-## Community
-
-Questions, results from your own P100, or ideas: join us on [Discord](https://discord.gg/3Qs2uejUf9).
 
 ## Credits
 
