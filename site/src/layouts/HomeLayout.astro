@@ -5,6 +5,7 @@ import "@fontsource-variable/geist";
 import "@fontsource-variable/geist-mono";
 import "../styles/home.css";
 import Logo from "../assets/logo.svg?raw";
+import { fathom } from "../analytics.mjs";
 import { release } from "../release.mjs";
 
 interface Props {
@@ -40,6 +41,7 @@ const discord = "https://discord.gg/3Qs2uejUf9";
     <script is:inline>
       document.documentElement.classList.add("js");
     </script>
+    <script is:inline {...fathom}></script>
   </head>
   <body>
     <a class="skip" href="#main">Skip to content</a>

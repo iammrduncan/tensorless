@@ -1,8 +1,9 @@
 # Response headers for tensorless.dev on Cloudflare Pages, which reads this file from the build output.
 # Starlight's pages carry small inline scripts and Pagefind's search runs WebAssembly; the policy
-# allows those and nothing from other hosts.
+# allows those. The only other host is Fathom Analytics (src/analytics.mjs): its script, the image
+# that counts a page view, and the beacon that sends events all go to cdn.usefathom.com.
 /*
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.usefathom.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://cdn.usefathom.com; connect-src 'self' https://cdn.usefathom.com; font-src 'self' data:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
   Strict-Transport-Security: max-age=31536000
   X-Content-Type-Options: nosniff
   X-Frame-Options: DENY
