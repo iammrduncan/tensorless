@@ -1,0 +1,179 @@
+#pragma once
+
+#include "llama.h"
+
+#include "common.h"
+
+#include <string>
+#include <vector>
+
+// common_sampler extends llama_sampler with additional functionality:
+//
+//  - grammar support
+//  - custom sampler logic based on the parameters
+//  - history of the last accepted tokens
+//  - performance metrics
+//
+// This goal is to have a common implementation of the sampling logic shared across the examples.
+// For example, depending on the temperature, the sampling chain can be very simple (greedy) or more
+// complex (top-k, top-p, etc).
+//
+// Another example is related to the grammar. In general, the grammar constraints applied on the full
+// vocabulary can be very taxing. To improve performance, the grammar can be applied only to the sampled
+// token in order to verify if it fits the grammar. And only if the token doesn't fit the grammar, the
+// grammar constraints are applied to the full vocabulary and the token is resampled.
+//
+// The common_sampler also maintains a container with the last accepted tokens. In the future, this can
+// be moved into the core llama library.
+//
+// For convenience, the common_sampler also maintains a container with the current candidate tokens.
+// This can be used to access the probabilities of the rest of the non-sampled tokens.
+//
+// TODO: measure grammar performance
+//
+
+struct common_sampler;
+
+// llama_sampler API overloads
+
+// note: can mutate params in some cases
+struct common_sampler * common_sampler_init(
+        const struct llama_model * model,
+        struct common_params_sampling & params);
+
+void common_sampler_free(struct common_sampler * gsmpl);
+
+// if is_generated is true, the token is accepted by the sampling chain, the reasoning budget sampler, and the grammar sampler
+void                    common_sampler_accept(struct common_sampler * gsmpl, llama_token token, bool is_generated);
+void                    common_sampler_reset (struct common_sampler * gsmpl);
+struct common_sampler * common_sampler_clone (struct common_sampler * gsmpl);
+void                    common_sampler_copy  (const struct common_sampler * src, struct common_sampler * dst);
+
+// arguments can be nullptr to skip printing
+void common_perf_print(const struct llama_context * ctx, const struct common_sampler * gsmpl);
+
+// get the underlying llama_sampler_chain
+struct llama_sampler * common_sampler_get(const struct common_sampler * gsmpl);
+
+// Returns nullptr unless the chain is equivalent to greedy sampling, possibly behind logit biases.
+// The returned chain is [greedy], or [logit-bias, greedy] when the request carries logit biases (this is
+// how the server expresses ignore_eos) or the model declares suppress tokens. The bias is applied to the
+// logit rows on the backend, in front of the argmax, exactly as the CPU chain does. Owned by gsmpl.
+bool common_sampler_supports_greedy_backend(const common_params_sampling & params);
+
+// the bias set that chain applies in front of its argmax: the request's logit_bias followed by the model's
+// suppress tokens at -INFINITY (vocab may be null to skip the latter), with repeated tokens summed so that
+// the single backend bias row matches the CPU sampler, which adds every entry. Exposed for tests.
+std::vector<llama_logit_bias> common_sampler_greedy_biases(
+        const common_params_sampling & params, const struct llama_vocab * vocab);
+
+struct llama_sampler * common_sampler_get_greedy_backend(struct common_sampler * gsmpl, const struct llama_model * model);
+
+// after llama_set_sampler: true if the greedy chain can verify on the backend. A bare [greedy] chain always
+// can (the graph emits one argmax over the output rows for it); a biased chain must have been offloaded.
+bool common_sampler_greedy_backend_ready(const struct common_sampler * gsmpl);
+
+// sampled (temp > 0) speculative verification on the backend: true if the chain built from these params
+// runs entirely on the backend for all verification rows at once (temp, top-k, top-p, min-p, logit bias,
+// dist; penalties/DRY only while inactive; no grammar, mirostat, n_probs, typical/xtc/top-n-sigma/adaptive-p)
+bool common_sampler_supports_backend_verify(const common_params_sampling & params);
+
+// returns the sampler chain to install with llama_set_sampler for sampled backend verification, or nullptr
+// if the sampler is not eligible. The chain is owned by gsmpl.
+struct llama_sampler * common_sampler_get_backend_verify(struct common_sampler * gsmpl);
+
+// after llama_set_sampler: true if every sampler of the chain runs on the backend (a partially offloaded
+// chain cannot sample a verification row block and must fall back to CPU verification)
+bool common_sampler_backend_verify_ready(const struct common_sampler * gsmpl);
+
+// extended sampling implementation:
+//
+// - set logits
+// - apply the configured sampler chain
+// - check if the token fits the grammar (if any)
+// - if not: resample by first applying the grammar constraints and then sampling again (slower path)
+//
+// if grammar_first is true, the grammar is applied before the samplers (slower)
+// useful in cases where all the resulting candidates (not just the sampled one) must fit the grammar
+//
+llama_token common_sampler_sample(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, bool grammar_first = false);
+
+// generalized version of common_sampler_sample
+//
+// will cross-reference the sampled tokens with a batch of draft tokens and accept those that match
+// if the sampler disagrees at some point, we stop and return the accepted tokens up to now
+//
+//      common_sampler_sample_n(gsmpl, ctx, { idx }, {});
+//
+// is equivalent to
+//
+//      common_sampler_sample(gsmpl, ctx, idx);
+//      common_sampler_accept(gsmpl, token, true);
+//
+// requires: idxs.size() == draft.size() + 1
+//
+// returns at least 1 token, up to idxs.size()
+//
+std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const std::vector<int> & idxs, const llama_tokens & draft, bool grammar_first = false);
+
+// assume idxs == [ 0, 1, 2, ..., draft.size() ]
+std::vector<llama_token> common_sampler_sample_and_accept_n(struct common_sampler * gsmpl, struct llama_context * ctx, const llama_tokens & draft, bool grammar_first = false);
+
+// exact speculative verification: rejection sampling of each draft token against the distribution it was
+// sampled from (draft_q[i]: candidate ids with normalised probabilities), so the output distribution stays
+// exactly the target chain's. Acceptance per position is sum_x min(p(x), q(x)) instead of p(draft[i]).
+// An empty draft_q[i] (or an unsupported chain, see common_sampler_pq_supported) falls back to id-match
+// for that position and the following ones.
+struct common_sampler_pq_stats {
+    size_t n_pos   = 0; // draft positions verified with p/q
+    size_t n_match = 0; // accepted because the target sample equalled the draft token
+    size_t n_extra = 0; // accepted by the residual acceptance test (id-match would have rejected)
+    size_t n_rej   = 0; // rejected: token drawn from the residual distribution norm(max(p - q, 0))
+    double sum_p_d = 0; // sum of p(draft[i]): the id-match acceptance probability
+    double sum_min = 0; // sum of sum_x min(p(x), q(x)): the p/q acceptance probability
+};
+
+// true when the chain samples on the CPU at temperature > 0 without grammar, reasoning budget or mirostat
+bool common_sampler_pq_supported(const struct common_sampler * gsmpl);
+
+// replay: the draft is a previously verified result being re-decoded after a checkpoint restore, so a
+// rejection at its last position is the recorded outcome and the fresh token after it is still sampled
+std::vector<llama_token> common_sampler_sample_and_accept_n_pq(struct common_sampler * gsmpl, struct llama_context * ctx, const std::vector<int> & idxs, const llama_tokens & draft, const std::vector<std::vector<llama_token_data>> & draft_q, bool grammar_first = false, bool replay = false);
+
+const common_sampler_pq_stats & common_sampler_get_pq_stats(const struct common_sampler * gsmpl);
+
+uint32_t common_sampler_get_seed(const struct common_sampler * gsmpl);
+
+// force the reasoning budget sampler (if any) to begin forcing its end sequence now.
+bool common_sampler_reasoning_budget_force(struct common_sampler * gsmpl);
+
+// helpers
+
+// access the internal list of current candidate tokens
+// if do_sort == true, the candidates are guaranteed to be sorted afterwards (in descending order of probability)
+// the .sorted flag of the result indicates whether the returned candidates are sorted
+llama_token_data_array * common_sampler_get_candidates(struct common_sampler * gsmpl, bool do_sort);
+
+// get the last accepted token
+llama_token common_sampler_last(const struct common_sampler * gsmpl);
+
+// print the sampler chain into a string
+std::string common_sampler_print(const struct common_sampler * gsmpl);
+
+// get a string representation of the last accepted tokens
+std::string common_sampler_prev_str(common_sampler * gsmpl, llama_context * ctx, int n);
+
+char        common_sampler_type_to_chr(enum common_sampler_type cnstr);
+std::string common_sampler_type_to_str(enum common_sampler_type cnstr);
+
+std::vector<enum common_sampler_type> common_sampler_types_from_names(const std::vector<std::string> & names);
+std::vector<enum common_sampler_type> common_sampler_types_from_chars(const std::string & chars);
+
+llama_sampler * llama_sampler_init_llg(const llama_vocab * vocab,
+                const char * grammar_kind, const char * grammar_data);
+
+struct common_sampler_deleter {
+    void operator()(common_sampler * s) { common_sampler_free(s); }
+};
+
+typedef std::unique_ptr<common_sampler, common_sampler_deleter> common_sampler_ptr;
