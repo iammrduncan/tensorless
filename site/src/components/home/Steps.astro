@@ -1,0 +1,144 @@
+---
+// From a fresh machine to a model, in the shape of fxbot's "Get started", and what the machine needs.
+const copyIcon = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 10.5h-.5A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`;
+const steps = [
+  { title: "Install it", cmd: "curl -fsSL https://tensorless.dev/install.sh | sh", body: "One static binary in ~/.local/bin, checked by sha256 against the release." },
+  { title: "Check the machine", cmd: "tensorless doctor", body: "The card, the driver, podman or docker, NVIDIA container support and disk space, each with the command that fixes it." },
+  { title: "Run the model", cmd: "tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF", body: "Pulls the image by digest and the model by revision, checks both, and serves on 127.0.0.1:8080." },
+  { title: "Use it", cmd: "curl http://127.0.0.1:8080/v1/chat/completions ...", body: "An OpenAI-compatible API. The model's name is its Hugging Face repository." },
+];
+const needs = [
+  ["Card", "NVIDIA Tesla P100 16 GB, free for this model"],
+  ["Driver", "R525 to R580 (R580 is Pascal's last)"],
+  ["Machine", "Linux on x86-64, with AVX2, FMA and F16C"],
+  ["Runtime", "podman with CDI, or docker with the NVIDIA toolkit"],
+  ["Disk", "about 13 GB for the model, a few GB for the image"],
+  ["Network", "127.0.0.1 only, unless you pass --host"],
+];
+---
+
+<section class="section" id="start" aria-labelledby="start-title">
+  <div class="wrap">
+    <p class="label" data-reveal>Get started</p>
+    <h2 id="start-title" class="h2" data-reveal>From a fresh machine to a model.</h2>
+    <div class="steps">
+      {
+        steps.map((s, i) => (
+          <div class="step panel" data-reveal style={`--d:${i * 0.05}s`}>
+            <p class="t">
+              <span class="n mono">{i + 1}</span>
+              {s.title}
+            </p>
+            <div class="cmd">
+              <code>{s.cmd}</code>
+              {!s.cmd.endsWith("...") && <button class="copy" type="button" data-copy={s.cmd} aria-label={`Copy: ${s.cmd}`} set:html={copyIcon} />}
+            </div>
+            <p class="b small">{s.body}</p>
+          </div>
+        ))
+      }
+    </div>
+    <div class="need">
+      <div data-reveal>
+        <h3>What it needs</h3>
+        <p class="small">
+          tensorless runs on your own machine. There is no account, and the launcher sends no telemetry: it talks only to
+          Hugging Face for the model and to the registry for the image.
+        </p>
+        <p><a class="btn btn-dark" href="/docs/tutorials/first-model/">The tutorial: your first model</a> <a class="btn" href="/docs/">All the docs</a></p>
+      </div>
+      <dl class="spec panel" data-reveal>
+        {needs.map(([k, v]) => <div><dt>{k}</dt><dd>{v}</dd></div>)}
+      </dl>
+    </div>
+  </div>
+</section>
+
+<style>
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.9rem;
+    margin-top: 2rem;
+  }
+  .step {
+    min-width: 0;
+    padding: 1.1rem 1.2rem 1.2rem;
+    box-shadow: none;
+  }
+  .t {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin: 0 0 0.8rem;
+    font-weight: 600;
+  }
+  .n {
+    display: grid;
+    place-items: center;
+    width: 1.5rem;
+    height: 1.5rem;
+    border: 1px solid var(--rule-2);
+    border-radius: 50%;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+  .cmd {
+    background: var(--panel-2);
+  }
+  .cmd code {
+    font-size: 0.78rem;
+    padding-block: 0.6rem;
+  }
+  .b {
+    margin: 0.7rem 0 0;
+  }
+  .need {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    gap: 2.5rem;
+    margin-top: 3.5rem;
+    align-items: start;
+  }
+  .need h3 {
+    margin: 0;
+    font-size: 1.3rem;
+    letter-spacing: -0.02em;
+  }
+  .need p {
+    margin-top: 0.6rem;
+  }
+  .need p:last-child {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1.4rem;
+  }
+  .spec {
+    margin: 0;
+    box-shadow: none;
+  }
+  .spec div {
+    display: grid;
+    grid-template-columns: 6.5rem 1fr;
+    gap: 1rem;
+    padding: 0.7rem 1rem;
+    border-top: 1px solid var(--rule);
+    font-size: 0.9rem;
+  }
+  .spec div:first-child {
+    border-top: 0;
+  }
+  .spec dt {
+    color: var(--muted);
+  }
+  .spec dd {
+    margin: 0;
+  }
+  @media (max-width: 760px) {
+    .steps,
+    .need {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

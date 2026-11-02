@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/assets/banner.png" alt="Bitsy, the tensorless mascot, beside the name tensorless, the line &quot;A $100 GPU card. We made it fly.&quot; and the command tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF, with the model drawn as a glowing tower of layers" width="100%"></p>
+
 # tensorless
 
 **Join us on [Discord](https://discord.gg/3Qs2uejUf9)**: questions, results from your own P100, and ideas.

@@ -1,0 +1,28 @@
+---
+// tensorless.dev's home page. The docs live under /docs/ (Starlight).
+import DocsGrid from "../components/home/DocsGrid.astro";
+import Format from "../components/home/Format.astro";
+import Hero from "../components/home/Hero.astro";
+import Memory from "../components/home/Memory.astro";
+import Models from "../components/home/Models.astro";
+import Receipt from "../components/home/Receipt.astro";
+import Steps from "../components/home/Steps.astro";
+import HomeLayout from "../layouts/HomeLayout.astro";
+---
+
+<HomeLayout
+  title="tensorless: tuned models for the Tesla P100, in one command"
+  description="Run a model tuned for your GPU, on the engine it was tuned with, in one command. Qwen3.8-27B at 30 tokens a second on a $100 Tesla P100."
+>
+  <Hero />
+  <Format />
+  <Memory />
+  <Receipt />
+  <Steps />
+  <Models />
+  <DocsGrid />
+</HomeLayout>
+
+<script>
+  import "../scripts/home";
+</script>

@@ -1,0 +1,281 @@
+---
+// Turn first, then round: a 16-lane Walsh–Hadamard network with the file's first 16 signs and the
+// real normalized transform, on an example input with one outlier. Values flow through the wires
+// stage by stage, and the outlier's energy splits 2, 4, 8, 16 ways. Then both versions are rounded
+// to 3 bits with one shared scale each, and the errors are computed live.
+import map from "../../data/model-map.json";
+
+const payload = { signs: map.rotation.first_signs.slice(0, 16) };
+const steps = ["an outlier", "flip signs", "mix pairs ×4", "round to 3 bits"];
+const at = [0, 1.2, 2.6, 8.4];
+---
+
+<figure class="anim" data-turn>
+  <div class="chips mono" role="group" aria-label="Steps">
+    {steps.map((s, i) => <button type="button" data-seek={at[i]}><b>{i + 1}</b>{s}</button>)}
+  </div>
+  <canvas data-turn-canvas role="img" aria-label="Sixteen values flowing through a Walsh–Hadamard network: one large outlier is spread evenly across all sixteen, then both versions are rounded to 3 bits"></canvas>
+  <script type="application/json" data-turn-data set:html={JSON.stringify(payload)} />
+</figure>
+
+<style>
+  .anim {
+    margin: 0;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.8rem;
+  }
+  .chips button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.32rem 0.7rem 0.32rem 0.35rem;
+    border: 1px solid var(--rule-2);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 0.74rem var(--mono);
+    cursor: pointer;
+  }
+  .chips b {
+    display: grid;
+    place-items: center;
+    width: 1.3rem;
+    height: 1.3rem;
+    border-radius: 50%;
+    background: var(--panel-2);
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+  .chips button.on {
+    color: #fff;
+    border-color: rgba(255, 140, 77, 0.6);
+    background: rgba(255, 140, 77, 0.1);
+  }
+  .chips button.on b {
+    background: #ff8c4d;
+    color: #07080c;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 520px;
+  }
+  @media (max-width: 700px) {
+    canvas {
+      height: 600px;
+    }
+  }
+</style>
+
+<script>
+  import { clamp01, crisp, ease, glow, loop, span, type Scene } from "../../scripts/canvas";
+
+  const root = document.querySelector<HTMLElement>("[data-turn]");
+  if (root) {
+    const { signs } = JSON.parse(root.querySelector("[data-turn-data]")!.textContent!) as { signs: number[] };
+    const canvas = root.querySelector<HTMLCanvasElement>("[data-turn-canvas]")!;
+    const chips = [...root.querySelectorAll<HTMLButtonElement>("[data-seek]")];
+    const N = 16;
+    const x0 = [0.12, -0.31, 0.08, 0.22, -0.05, 6.0, 0.17, -0.14, 0.03, -0.26, 0.11, 0.2, -0.09, 0.15, -0.18, 0.06];
+    // Columns: the input, after the signs, then after each of the four rounds of mixing.
+    const cols: number[][] = [x0.slice(), x0.map((v, i) => v * signs[i])];
+    const H = [1, 2, 4, 8];
+    for (const h of H) {
+      const v = cols[cols.length - 1];
+      const n = v.slice();
+      for (let i = 0; i < N; i++) if ((i & h) === 0) {
+        n[i] = (v[i] + v[i + h]) / Math.SQRT2;
+        n[i + h] = (v[i] - v[i + h]) / Math.SQRT2;
+      }
+      cols.push(n);
+    }
+    const out = cols[cols.length - 1];
+    // Round to 3 bits with one shared scale (codes −4..3), as a PN block does.
+    const round = (a: number[]) => {
+      const d = Math.max(...a.map(Math.abs)) / 4;
+      const q = a.map((x) => Math.max(-4, Math.min(3, Math.round(x / d))));
+      const err = Math.sqrt(a.reduce((s, x, i) => s + (x - q[i] * d) ** 2, 0) / a.reduce((s, x) => s + x * x, 0));
+      return { q, zeros: q.filter((c) => c === 0).length, err };
+    };
+    const before = round(x0);
+    const after = round(out);
+    const PERIOD = 13;
+    const STAGE = 1.25; // seconds per column
+    const T0 = 1.2; // the flow starts after the input is shown
+    const labels = ["input", "flip signs", "mix ×1", "mix ×2", "mix ×4", "mix ×8"];
+    const hot = (v: number) => Math.min(1, Math.abs(v) / 3);
+    const color = (v: number) => {
+      const k = hot(v);
+      const r = Math.round(90 + (255 - 90) * k);
+      const g = Math.round(133 + (140 - 133) * k);
+      const b = Math.round(255 + (77 - 255) * k);
+      return `rgb(${r},${g},${b})`;
+    };
+
+    let S: Scene;
+    const G = { left: 0, right: 0, top: 0, lane: 0, colX: [] as number[], rulerY: 0 };
+    const layout = (s: Scene) => {
+      const narrow = s.w < 640;
+      G.left = narrow ? 34 : 70;
+      G.right = s.w - (narrow ? 34 : 70);
+      G.top = 34;
+      G.lane = narrow ? 18 : 20;
+      G.colX = cols.map((_, k) => G.left + (k / (cols.length - 1)) * (G.right - G.left));
+      G.rulerY = G.top + G.lane * (N - 1) + 52;
+    };
+    const laneY = (i: number) => G.top + i * G.lane;
+
+    const draw = (t: number) => {
+      const { ctx, w, h } = S;
+      ctx.clearRect(0, 0, w, h);
+      const fade = 1 - span(t, PERIOD - 0.7, PERIOD);
+      ctx.globalAlpha = fade;
+      const front = clamp01((t - T0) / STAGE / (cols.length - 1)) * (cols.length - 1); // 0..5
+      const mono = getComputedStyle(document.body).getPropertyValue("--mono");
+      ctx.font = `500 10.5px ${mono}`;
+
+      // Column labels.
+      ctx.textAlign = "center";
+      cols.forEach((_, k) => {
+        ctx.fillStyle = k <= front + 0.001 ? "#c6cad6" : "#5e6476";
+        if (S.w >= 640 || k % 1 === 0) ctx.fillText(S.w < 640 && k > 1 ? `×${H[k - 2]}` : labels[k], G.colX[k], G.top - 16);
+      });
+
+      // Wires: straight for the signs, crossing pairs for each round of mixing.
+      for (let k = 0; k < cols.length - 1; k++) {
+        const a = G.colX[k], b = G.colX[k + 1];
+        const active = front > k && front < k + 1;
+        const done = front >= k + 1;
+        for (let i = 0; i < N; i++) {
+          const targets = k === 0 ? [i] : [i, i ^ H[k - 1]];
+          for (const j of targets) {
+            ctx.strokeStyle = active ? "rgba(125,141,255,0.45)" : done ? "rgba(125,141,255,0.16)" : "rgba(125,141,255,0.07)";
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(a, laneY(i));
+            ctx.bezierCurveTo((a + b) / 2, laneY(i), (a + b) / 2, laneY(j), b, laneY(j));
+            ctx.stroke();
+          }
+        }
+      }
+
+      // Particles: what each value sends along each wire during its stage.
+      ctx.globalCompositeOperation = "lighter";
+      const k = Math.floor(front);
+      if (front > 0 && front < cols.length - 1) {
+        const p = ease(front - k);
+        const a = G.colX[k], b = G.colX[k + 1];
+        for (let i = 0; i < N; i++) {
+          const v = cols[k][i];
+          const targets = k === 0 ? [[i, v * signs[i]]] : [[i, v / Math.SQRT2], [i ^ H[k - 1], v / Math.SQRT2]];
+          for (const [j, part] of targets) {
+            // a point on the same bezier as the wire
+            const y0 = laneY(i), y1 = laneY(j as number);
+            const u = p, mu = 1 - u;
+            const x = mu * mu * mu * a + 3 * mu * mu * u * ((a + b) / 2) + 3 * mu * u * u * ((a + b) / 2) + u * u * u * b;
+            const y = mu * mu * mu * y0 + 3 * mu * mu * u * y0 + 3 * mu * u * u * y1 + u * u * u * y1;
+            const s = 3 + 16 * hot(part as number);
+            ctx.globalAlpha = fade * (0.35 + 0.65 * hot(part as number));
+            ctx.drawImage(glow(color(part as number)), x - s, y - s, s * 2, s * 2);
+          }
+        }
+      }
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = fade;
+
+      // Nodes: each value as a bar on its lane, once the flow has reached its column.
+      for (let c = 0; c < cols.length; c++) {
+        const shown = c === 0 ? span(t, 0, 0.6) : clamp01(front - (c - 1) - 0.85) * 6.6;
+        if (shown <= 0) continue;
+        for (let i = 0; i < N; i++) {
+          const v = cols[c][i];
+          const len = Math.min(26, 4 + Math.abs(v) * 7) * clamp01(shown);
+          const y = laneY(i);
+          ctx.fillStyle = color(v);
+          ctx.globalAlpha = fade * clamp01(shown);
+          ctx.beginPath();
+          ctx.roundRect(G.colX[c] - len / 2, y - 3.5, len, 7, 3.5);
+          ctx.fill();
+          if (Math.abs(v) > 2.5) {
+            ctx.globalCompositeOperation = "lighter";
+            ctx.drawImage(glow("rgb(255,140,77)"), G.colX[c] - 22, y - 22, 44, 44);
+            ctx.globalCompositeOperation = "source-over";
+          }
+        }
+      }
+      ctx.globalAlpha = fade;
+      // Values at the two ends.
+      if (S.w >= 640) {
+        ctx.font = `500 10px ${mono}`;
+        for (let i = 0; i < N; i++) {
+          ctx.textAlign = "right";
+          ctx.fillStyle = Math.abs(x0[i]) > 2 ? "#ff8c4d" : "#5e6476";
+          ctx.fillText(x0[i].toFixed(2), G.left - 18, laneY(i) + 3.5);
+          if (front >= cols.length - 1.01) {
+            ctx.textAlign = "left";
+            ctx.fillStyle = "#8a90a3";
+            ctx.fillText(out[i].toFixed(2), G.right + 18, laneY(i) + 3.5);
+          }
+        }
+      }
+
+      // Rounding to 3 bits: the same 16 values, not turned and turned.
+      const pr = span(t, T0 + STAGE * 5 + 0.4, T0 + STAGE * 5 + 1.6);
+      if (pr > 0) {
+        const halves = S.w < 640 ? [[0, G.rulerY], [0, G.rulerY + 130]] : [[0, G.rulerY], [S.w / 2 + 12, G.rulerY]];
+        const width = S.w < 640 ? S.w : S.w / 2 - 12;
+        [[before, "not turned"], [after, "turned first"]].forEach(([res, name], idx) => {
+          const r = res as typeof before;
+          const [bx, by] = halves[idx];
+          ctx.globalAlpha = fade * pr;
+          ctx.fillStyle = "#c6cad6";
+          ctx.font = `600 12px ${getComputedStyle(document.body).getPropertyValue("--sans")}`;
+          ctx.textAlign = "left";
+          ctx.fillText(`Rounded to 3 bits, ${name}`, bx, by);
+          ctx.font = `500 10.5px ${mono}`;
+          const top = by + 14, gap = 10;
+          for (let c = 0; c < 8; c++) {
+            const y = top + (7 - c) * gap;
+            ctx.strokeStyle = c === 4 ? "rgba(238,240,246,0.3)" : "rgba(125,141,255,0.14)";
+            ctx.beginPath();
+            ctx.moveTo(bx, y);
+            ctx.lineTo(bx + width - 150, y);
+            ctx.stroke();
+          }
+          for (let i = 0; i < N; i++) {
+            const code = r.q[i] + 4;
+            const x = bx + 8 + (i / (N - 1)) * (width - 166);
+            const y = top + (7 - code) * gap;
+            const lost = r.q[i] === 0;
+            ctx.globalCompositeOperation = "lighter";
+            ctx.drawImage(glow(lost ? "rgb(255,90,90)" : "rgb(120,160,255)"), x - 7, y - 7, 14, 14);
+            ctx.globalCompositeOperation = "source-over";
+          }
+          ctx.textAlign = "left";
+          ctx.fillStyle = r.zeros > 8 ? "#ff7a7a" : "#7dd3a8";
+          ctx.font = `700 20px ${getComputedStyle(document.body).getPropertyValue("--sans")}`;
+          ctx.fillText(`${r.zeros} of 16 → 0`, bx + width - 140, top + 30);
+          ctx.font = `500 11px ${mono}`;
+          ctx.fillStyle = "#8a90a3";
+          ctx.fillText(`error ${(r.err * 100).toFixed(0)}%`, bx + width - 140, top + 50);
+        });
+      }
+      ctx.globalAlpha = 1;
+      const step = t >= T0 + STAGE * 5 + 0.4 ? 3 : front > 1 ? 2 : front > 0 ? 1 : 0;
+      chips.forEach((c, i) => c.classList.toggle("on", i === step));
+    };
+
+    let ctl: ReturnType<typeof loop> | null = null;
+    S = crisp(canvas, (s) => {
+      S = s;
+      layout(s);
+      ctl?.redraw();
+    });
+    ctl = loop(root, PERIOD, draw, 11.5);
+    chips.forEach((c) => c.addEventListener("click", () => ctl?.seek(Number(c.dataset.seek))));
+  }
+</script>

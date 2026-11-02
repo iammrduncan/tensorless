@@ -1,0 +1,106 @@
+/* tensorless docs: the home page's paper, ink and blue (src/styles/home.css).
+   Starlight's dark theme is the default (:root); [data-theme="light"] holds the light values. */
+:root {
+  --sl-font: "Geist Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --sl-font-mono: "Geist Mono Variable", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --sl-color-accent-low: #1c2250;
+  --sl-color-accent: #6f85ff;
+  --sl-color-accent-high: #c9d1ff;
+  --sl-color-white: #f2f0eb;
+  --sl-color-gray-1: #e6e3dc;
+  --sl-color-gray-2: #c6c2ba;
+  --sl-color-gray-3: #9b978f;
+  --sl-color-gray-4: #6c6963;
+  --sl-color-gray-5: #3a3834;
+  --sl-color-gray-6: #1d1c1a;
+  --sl-color-black: #0f0f0e;
+  --tl-hl: #ffd84d;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #e3e8ff;
+  --sl-color-accent: #2747ff;
+  --sl-color-accent-high: #16248f;
+  --sl-color-white: #141413;
+  --sl-color-gray-1: #26251f;
+  --sl-color-gray-2: #3c3a36;
+  --sl-color-gray-3: #6d6a63;
+  --sl-color-gray-4: #9a968e;
+  --sl-color-gray-5: #d2cec5;
+  --sl-color-gray-6: #ece9e2;
+  --sl-color-gray-7: #f4f2ed;
+  --sl-color-black: #fbfaf7;
+}
+
+.sl-markdown-content h1,
+.sl-markdown-content h2,
+.content-panel h1 {
+  letter-spacing: -0.02em;
+}
+
+/* Keep running text at a comfortable width. */
+.sl-markdown-content p,
+.sl-markdown-content li {
+  max-width: 72ch;
+}
+
+/* Tables scroll inside their own box on narrow screens, and words break only when they must. */
+.sl-markdown-content table {
+  display: block;
+  overflow-x: auto;
+  overflow-wrap: break-word;
+}
+
+/* Long hashes and digests in tables wrap instead of widening the page. */
+.sl-markdown-content td code {
+  overflow-wrap: anywhere;
+}
+
+/* Diátaxis cards on the docs home. */
+.tl-quadrants {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+.tl-quadrants a {
+  display: block;
+  padding: 1.1rem 1.2rem 1.2rem;
+  border: 1px solid var(--sl-color-gray-5);
+  border-radius: 0.75rem;
+  text-decoration: none;
+  color: var(--sl-color-gray-2);
+  transition: border-color 0.2s, transform 0.2s, background-color 0.2s;
+}
+.tl-quadrants a:hover,
+.tl-quadrants a:focus-visible {
+  border-color: var(--sl-color-accent);
+  background-color: var(--sl-color-accent-low);
+  transform: translateY(-2px);
+}
+.tl-quadrants .tl-kicker {
+  display: block;
+  font-family: var(--sl-font-mono);
+  font-size: var(--sl-text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sl-color-text-accent);
+}
+.tl-quadrants strong {
+  display: block;
+  margin: 0.35rem 0 0.25rem;
+  font-size: var(--sl-text-lg);
+  color: var(--sl-color-white);
+}
+.tl-quadrants span:last-child {
+  font-size: var(--sl-text-sm);
+}
+.sl-markdown-content .tl-quadrants {
+  max-width: none;
+}
+
+/* The logo mark sits at the size of the title. */
+.site-title img {
+  height: 1.6rem;
+  width: auto;
+}

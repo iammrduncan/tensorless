@@ -1,0 +1,228 @@
+---
+// The release's measurement, printed as a receipt: every line from
+// docs/receipts/engine-v0.1.0/Qwen3.8-27B-PN3-GGUF-p100.md and engine/PROVENANCE.md.
+import { recipes, release } from "../../release.mjs";
+
+const r = recipes.find((x) => x.model.name === "pn3");
+const digest = release.digest.replace("sha256:", "");
+const lines: [string, string][] = [
+  ["center", "TENSORLESS BENCH"],
+  ["center", "2026-11-02 · ONE TESLA P100-PCIE-16GB"],
+  ["rule", ""],
+  ["kv", `IMAGE|0.1.0-sm60`],
+  ["kv", `DIGEST|${digest.slice(0, 12)}…`],
+  ["kv", `MODEL|QWEN3.8-27B-PN3`],
+  ["kv", `FILE SHA256|${r.model.sha256.slice(0, 12)}…`],
+  ["kv", `PROMPT|429 TOKENS`],
+  ["kv", `GENERATE|256 TOKENS, GREEDY`],
+  ["rule", ""],
+  ["kv", "RUN 1|30.03 TOK/S"],
+  ["kv", "RUN 2|29.83 TOK/S"],
+  ["kv", "RUN 3|30.13 TOK/S"],
+  ["rule", ""],
+  ["big", "MEDIAN|30.03 TOK/S"],
+  ["kv", "RESEARCH RECEIPT|30.06 TOK/S"],
+  ["kv", "DIFFERENCE|−0.1%"],
+  ["kv", "FIRST TOKEN|4.46 S"],
+  ["kv", "GPU MEMORY|14.24 GIB"],
+  ["kv", "LOAD TO LISTENING|3.6 S"],
+  ["rule", ""],
+  ["bars", digest],
+];
+const receipt = "https://github.com/iammrduncan/tensorless/blob/main/docs/receipts/engine-v0.1.0/Qwen3.8-27B-PN3-GGUF-p100.md";
+// A barcode drawn from the image digest: one bar per hex digit, its width from the digit.
+const bars = [...digest.slice(0, 40)].map((c) => 1 + (parseInt(c, 16) % 4));
+---
+
+<section class="section" id="measured" aria-labelledby="receipt-title">
+  <div class="wrap grid">
+    <div class="text">
+      <p class="label" data-reveal>Measured</p>
+      <h2 id="receipt-title" class="h2" data-reveal>Every release comes with a receipt.</h2>
+      <p class="lede" data-reveal>
+        Before a recipe is marked released, its exact image runs on a real P100 and <code>tensorless bench</code> measures it.
+        This is the receipt of v0.1.0's main target. The digest it measured is the digest the recipe pins, promoted without a
+        rebuild.
+      </p>
+      <p class="lede" data-reveal>
+        The engine itself came out of an automated hill climb: <strong>131 judged attempts, 28 confirmed improvements</strong>,
+        taking this model from <span class="mark">7.74 to 30.06 tokens a second</span> on the same card, with every step checked
+        against the model's starting numerics.
+      </p>
+      <p data-reveal><a class="btn" href={receipt}>Read the full receipt</a></p>
+    </div>
+
+    <div class="printer" data-printer>
+      <div class="slot" aria-hidden="true"></div>
+      <div class="paper-clip">
+        <div class="paper mono" data-paper aria-label="Receipt of the v0.1.0 benchmark">
+          {
+            lines.map(([kind, text]) =>
+              kind === "rule" ? (
+                <p class="ln rule" />
+              ) : kind === "center" ? (
+                <p class="ln center">{text}</p>
+              ) : kind === "bars" ? (
+                <p class="ln barcode">
+                  <span class="bars" aria-hidden="true">{bars.map((w) => <i style={`width:${w}px`} />)}</span>
+                  <span class="cap">{text.slice(0, 32)}<br />{text.slice(32)}</span>
+                </p>
+              ) : (
+                <p class={`ln kv ${kind === "big" ? "big" : ""}`}>
+                  <span>{text.split("|")[0]}</span>
+                  <span>{text.split("|")[1]}</span>
+                </p>
+              ),
+            )
+          }
+          <div class="stamp" aria-hidden="true">MEASURED</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 23rem);
+    gap: 3rem;
+    align-items: start;
+  }
+  .text .lede code {
+    font-size: 0.9em;
+  }
+  .text p:last-child {
+    margin-top: 1.5rem;
+  }
+  .printer {
+    position: relative;
+    justify-self: center;
+    width: 100%;
+    max-width: 22rem;
+  }
+  .slot {
+    height: 18px;
+    border-radius: 9px;
+    background: var(--ink);
+    box-shadow: inset 0 -4px 0 rgba(255, 255, 255, 0.08);
+  }
+  .paper-clip {
+    margin: -6px 12px 0;
+    overflow: hidden;
+  }
+  .paper {
+    position: relative;
+    padding: 1.4rem 1.2rem 1.8rem;
+    background: #fffdf8;
+    color: #222019;
+    font-size: 0.74rem;
+    line-height: 1.75;
+    box-shadow: 0 10px 30px -14px rgba(0, 0, 0, 0.35);
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), 95% 100%, 90% calc(100% - 8px), 85% 100%, 80% calc(100% - 8px), 75% 100%, 70% calc(100% - 8px), 65% 100%, 60% calc(100% - 8px), 55% 100%, 50% calc(100% - 8px), 45% 100%, 40% calc(100% - 8px), 35% 100%, 30% calc(100% - 8px), 25% 100%, 20% calc(100% - 8px), 15% 100%, 10% calc(100% - 8px), 5% 100%, 0 calc(100% - 8px));
+  }
+  .js [data-printer] .paper {
+    transform: translateY(calc(-100% + 10px));
+  }
+  .js [data-printer].printing .paper {
+    transform: translateY(0);
+    transition: transform 3.2s steps(22, end);
+  }
+  .ln {
+    margin: 0;
+  }
+  .center {
+    text-align: center;
+    font-weight: 600;
+  }
+  .rule {
+    height: 0;
+    margin: 0.55rem 0;
+    border-top: 1.5px dashed #b8b2a5;
+  }
+  .kv {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .kv span:last-child {
+    text-align: right;
+  }
+  .big {
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+  .barcode {
+    text-align: center;
+  }
+  .bars {
+    display: flex;
+    justify-content: center;
+    gap: 1.5px;
+    height: 34px;
+  }
+  .bars i {
+    background: #222019;
+  }
+  .cap {
+    display: block;
+    margin-top: 0.3rem;
+    font-size: 0.62rem;
+    line-height: 1.4;
+    color: #6b675e;
+  }
+  .stamp {
+    position: absolute;
+    left: 0.9rem;
+    bottom: 4.6rem;
+    padding: 0.25rem 0.7rem;
+    border: 3px double #2747ff;
+    border-radius: 6px;
+    color: #2747ff;
+    font: 700 1.25rem var(--sans);
+    letter-spacing: 0.12em;
+    transform: rotate(-12deg);
+    opacity: 0.85;
+    mix-blend-mode: multiply;
+  }
+  .js [data-printer] .stamp {
+    opacity: 0;
+    transform: rotate(-12deg) scale(1.8);
+  }
+  .js [data-printer].stamped .stamp {
+    opacity: 0.85;
+    transform: rotate(-12deg) scale(1);
+    transition: transform 0.25s cubic-bezier(0.3, 1.6, 0.5, 1), opacity 0.15s;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .js [data-printer] .paper {
+      transform: none;
+    }
+    .js [data-printer] .stamp {
+      opacity: 0.85;
+      transform: rotate(-12deg);
+    }
+  }
+  @media (max-width: 860px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  import { motion, onVisible } from "../../scripts/motion";
+  const p = document.querySelector<HTMLElement>("[data-printer]");
+  if (p && motion.running) {
+    const io = onVisible(
+      p,
+      (v) => {
+        if (!v) return;
+        io.disconnect();
+        p.classList.add("printing");
+        window.setTimeout(() => p.classList.add("stamped"), 3500);
+      },
+      "0px 0px -20% 0px",
+    );
+  }
+</script>

@@ -1,0 +1,147 @@
+---
+// The four kinds of documentation (Diátaxis), each with its first pages.
+const quads = [
+  {
+    kind: "Tutorials",
+    title: "Learn by doing",
+    body: "From a bare P100 host to a model answering your first request, then your card measured against the receipt.",
+    links: [
+      ["Run your first model on a P100", "/docs/tutorials/first-model/"],
+      ["Measure your card against the receipt", "/docs/tutorials/measure-your-card/"],
+    ],
+  },
+  {
+    kind: "How-to guides",
+    title: "Get one task done",
+    body: "Prepare a host, serve in the background, connect a client, keep models on another disk, fix a failed start.",
+    links: [
+      ["Prepare a Linux host for a P100", "/docs/how-to/setup/prepare-host/"],
+      ["Connect an OpenAI-compatible client", "/docs/how-to/use/openai-clients/"],
+    ],
+  },
+  {
+    kind: "Reference",
+    title: "Look it up",
+    body: "Every command and flag, the recipe file, the engine image and its 21 switches, the PN format and the receipts.",
+    links: [
+      ["Command line", "/docs/reference/cli/"],
+      ["Recipe file", "/docs/reference/recipes/"],
+    ],
+  },
+  {
+    kind: "Explanation",
+    title: "Understand why",
+    body: "How the pieces fit, why the P100, where the engine came from, and why you can trust the numbers.",
+    links: [
+      ["How tensorless works", "/docs/explanation/how-tensorless-works/"],
+      ["Why the P100", "/docs/explanation/why-the-p100/"],
+    ],
+  },
+];
+---
+
+<section class="section" id="docs" aria-labelledby="docs-title">
+  <div class="wrap">
+    <p class="label" data-reveal>Documentation</p>
+    <h2 id="docs-title" class="h2" data-reveal>Find your way in.</h2>
+    <p class="lede" data-reveal>
+      Four kinds of pages, one job each. Every command, flag and number in them is checked against the code and the receipts.
+    </p>
+    <div class="quads">
+      {
+        quads.map((q, i) => (
+          <div class="quad" data-reveal style={`--d:${i * 0.05}s`}>
+            <p class="kind">{q.kind}</p>
+            <h3>{q.title}</h3>
+            <p class="body small">{q.body}</p>
+            <ul>
+              {q.links.map(([label, href]) => (
+                <li>
+                  <a href={href}>{label} →</a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </div>
+    <p class="agents small" data-reveal>
+      For agents: <a href="/llms.txt">/llms.txt</a> lists every page, and <a href="/llms-full.txt">/llms-full.txt</a> holds them all. Questions, or
+      results from your own P100: <a href="https://discord.gg/3Qs2uejUf9">join the Discord</a>.
+    </p>
+  </div>
+</section>
+
+<style>
+  .quads {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-top: 2rem;
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    background: var(--panel);
+    overflow: hidden;
+  }
+  .quad {
+    display: flex;
+    flex-direction: column;
+    padding: 1.3rem 1.3rem 1.2rem;
+    border-left: 1px solid var(--rule);
+  }
+  .quad:first-child {
+    border-left: 0;
+  }
+  .kind {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  h3 {
+    margin: 0.3rem 0 0;
+    font-size: 1.1rem;
+    letter-spacing: -0.01em;
+  }
+  .body {
+    margin: 0.5rem 0 1rem;
+  }
+  ul {
+    list-style: none;
+    margin: auto 0 0;
+    padding: 0;
+    display: grid;
+    gap: 0.35rem;
+  }
+  a {
+    color: var(--ink-2);
+    font-size: 0.88rem;
+  }
+  .agents {
+    margin: 1.4rem 0 0;
+  }
+  .agents a {
+    font-size: inherit;
+  }
+  @media (max-width: 960px) {
+    .quads {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .quad:nth-child(3) {
+      border-left: 0;
+    }
+    .quad:nth-child(n + 3) {
+      border-top: 1px solid var(--rule);
+    }
+  }
+  @media (max-width: 560px) {
+    .quads {
+      grid-template-columns: 1fr;
+    }
+    .quad {
+      border-left: 0;
+      border-top: 1px solid var(--rule);
+    }
+    .quad:first-child {
+      border-top: 0;
+    }
+  }
+</style>

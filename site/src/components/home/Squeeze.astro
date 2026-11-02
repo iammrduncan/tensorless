@@ -1,0 +1,273 @@
+---
+// From 80 weights to 34 bytes, with the real first block of blk.0.ffn_gate.weight (pn3t): the
+// weights drop onto the 8 marks of their shared ruler, become 3-bit codes, and pack into the
+// block's real 34 bytes; then 16-bit's 160 bytes against PN3's 34.
+import map from "../../data/model-map.json";
+
+const blk = map.blocks.pn3t.blocks[0];
+const payload = { d: blk.d, words: blk.words };
+const steps = ["80 real weights", "8 marks, one ruler", "3 bits each", "packed in 34 bytes", "4.7× smaller"];
+const at = [0, 1.7, 3.4, 5.0, 8.0];
+---
+
+<figure class="anim" data-squeeze>
+  <div class="chips mono" role="group" aria-label="Steps">
+    {steps.map((s, i) => <button type="button" data-seek={at[i]}><b>{i + 1}</b>{s}</button>)}
+  </div>
+  <canvas data-sq-canvas role="img" aria-label="The first 80 weights of layer 0's ffn_gate dropping onto 8 levels, turning into 3-bit codes, and packing into the block's 34 bytes"></canvas>
+  <script type="application/json" data-sq-data set:html={JSON.stringify(payload)} />
+</figure>
+
+<style>
+  .anim {
+    margin: 0;
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin-bottom: 0.8rem;
+  }
+  .chips button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.32rem 0.7rem 0.32rem 0.35rem;
+    border: 1px solid var(--rule-2);
+    border-radius: 999px;
+    background: transparent;
+    color: var(--muted);
+    font: 500 0.74rem var(--mono);
+    cursor: pointer;
+    transition: color 0.2s, border-color 0.2s, background-color 0.2s;
+  }
+  .chips b {
+    display: grid;
+    place-items: center;
+    width: 1.3rem;
+    height: 1.3rem;
+    border-radius: 50%;
+    background: var(--panel-2);
+    color: var(--ink-2);
+    font-weight: 600;
+  }
+  .chips button.on {
+    color: #fff;
+    border-color: rgba(125, 141, 255, 0.6);
+    background: rgba(125, 141, 255, 0.1);
+  }
+  .chips button.on b {
+    background: #7d8dff;
+    color: #07080c;
+  }
+  canvas {
+    display: block;
+    width: 100%;
+    height: 440px;
+  }
+  @media (max-width: 700px) {
+    canvas {
+      height: 400px;
+    }
+  }
+</style>
+
+<script>
+  import { clamp01, crisp, ease, easeOut, glow, loop, span, type Scene } from "../../scripts/canvas";
+
+  const root = document.querySelector<HTMLElement>("[data-squeeze]");
+  if (root) {
+    const data = JSON.parse(root.querySelector("[data-sq-data]")!.textContent!) as { d: number; words: number[] };
+    const canvas = root.querySelector<HTMLCanvasElement>("[data-sq-canvas]")!;
+    const chips = [...root.querySelectorAll<HTMLButtonElement>("[data-seek]")];
+    const MARKS = ["#3d5bff", "#4f6fff", "#6684ff", "#8aa0ff", "#a58cff", "#b77bff", "#c96cf5", "#d65fe0"]; // n = 0..7
+    const code = (w: number, t: number) => (w >>> (3 * (t >> 1) + 16 * (t & 1))) & 7;
+    const n: number[] = [];
+    for (const w of data.words) for (let t = 0; t < 10; t++) n.push(code(w, t));
+    const vals = n.map((c) => data.d * (c - 4));
+    // The 34 bytes as stored: the fp16 scale, then the eight words, little-endian.
+    const fp16 = (() => {
+      const u = new Uint32Array(new Float32Array([data.d]).buffer)[0];
+      const sign = (u >>> 16) & 0x8000;
+      const exp = ((u >>> 23) & 0xff) - 127 + 15;
+      return sign | (exp << 10) | ((u >>> 13) & 0x3ff);
+    })();
+    const bytes = [fp16 & 0xff, fp16 >>> 8];
+    data.words.forEach((w) => bytes.push(w & 0xff, (w >>> 8) & 0xff, (w >>> 16) & 0xff, w >>> 24));
+    const hex = (b: number) => b.toString(16).padStart(2, "0");
+    const fmt = (v: number) => (Object.is(v, -0) || v === 0 ? "0" : (v > 0 ? "+" : "−") + Math.abs(v).toFixed(4));
+    const counts = new Array(8).fill(0);
+    n.forEach((c) => counts[c]++);
+    const PERIOD = 11.5;
+
+    let S: Scene;
+    const geo = { x0: 0, x1: 0, top: 0, gap: 0, stripY: 0, cell: 0, stripX: 0, barY: 0, labelX: 0 };
+    const layout = (s: Scene) => {
+      const narrow = s.w < 640;
+      geo.labelX = narrow ? 30 : 46;
+      geo.x0 = geo.labelX + 14;
+      geo.x1 = s.w - (narrow ? 70 : 170);
+      geo.top = 26;
+      geo.gap = narrow ? 24 : 28;
+      geo.stripY = geo.top + geo.gap * 7 + 48;
+      geo.cell = (s.w - 4) / 34;
+      geo.stripX = 2;
+      geo.barY = geo.stripY + 70;
+    };
+    const railY = (c: number) => geo.top + (7 - c) * geo.gap;
+    const beadX = (i: number) => geo.x0 + ((i + 0.5) / 80) * (geo.x1 - geo.x0);
+
+    const draw = (t: number) => {
+      const { ctx, w, h } = S;
+      ctx.clearRect(0, 0, w, h);
+      const pRails = span(t, 1.2, 2.4);
+      const pCodes = span(t, 3.2, 4.4);
+      const pPack = span(t, 5.0, 7.4);
+      const pBars = span(t, 8.0, 9.6);
+      const fade = 1 - span(t, PERIOD - 0.7, PERIOD);
+      ctx.globalAlpha = fade;
+
+      // The 8 marks: rails with their level and 3-bit code.
+      ctx.font = `500 11px ${getComputedStyle(document.body).getPropertyValue("--mono")}`;
+      for (let c = 0; c < 8; c++) {
+        const y = railY(c);
+        const lit = ease(pRails * 8 - (7 - c) * 0.6) ;
+        ctx.strokeStyle = c === 4 ? "rgba(238,240,246,0.35)" : `rgba(125,141,255,${0.1 + 0.35 * lit})`;
+        ctx.setLineDash(c === 4 ? [] : [3, 5]);
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(geo.x0 - 6, y);
+        ctx.lineTo(geo.x1 + 6, y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "#5e6476";
+        ctx.textAlign = "right";
+        ctx.fillText(c - 4 > 0 ? `+${c - 4}` : String(c - 4), geo.labelX, y + 4);
+        if (w >= 640) {
+          ctx.textAlign = "left";
+          ctx.globalAlpha = fade * (0.35 + 0.65 * Math.max(lit, pCodes));
+          ctx.fillStyle = MARKS[c];
+          ctx.fillText(c.toString(2).padStart(3, "0"), geo.x1 + 18, y + 4);
+          ctx.fillStyle = "#8a90a3";
+          ctx.fillText(`${fmt(data.d * (c - 4))}`, geo.x1 + 54, y + 4);
+          ctx.fillStyle = "#5e6476";
+          ctx.fillText(`×${counts[c]}`, geo.x1 + 126, y + 4);
+          ctx.globalAlpha = fade;
+        }
+      }
+
+      // The beads: fall onto their mark, then fly into the block's bytes.
+      ctx.globalCompositeOperation = "lighter";
+      const r = Math.max(2.2, (geo.x1 - geo.x0) / 80 / 2.6);
+      for (let i = 0; i < 80; i++) {
+        const c = n[i];
+        const fall = easeOut(span(t, i * 0.012, 0.9 + i * 0.012));
+        let x = beadX(i);
+        let y = -20 + (railY(c) + 20) * fall;
+        const word = Math.floor(i / 10);
+        const k = i % 10;
+        const tx = geo.stripX + (2 + 4 * word + (k + 0.5) * 0.4) * geo.cell;
+        const ty = geo.stripY + 17;
+        const fly = ease((pPack * 1.6) - (i / 80) * 0.6);
+        if (fly > 0) {
+          const mx = (x + tx) / 2;
+          const my = Math.min(y, ty) - 40;
+          const a = 1 - fly;
+          x = a * a * x + 2 * a * fly * mx + fly * fly * tx;
+          y = a * a * y + 2 * a * fly * my + fly * fly * ty;
+        }
+        const size = r * (1 + 0.8 * Math.sin(Math.PI * clamp01(fly)));
+        const col = pCodes > 0 ? MARKS[c] : "#6f8cff";
+        ctx.globalAlpha = fade * (fly >= 1 ? 0 : 1);
+        ctx.drawImage(glow(col), x - size * 3, y - size * 3, size * 6, size * 6);
+        // a stem from the zero line while the bead sits on its mark
+        if (fall >= 1 && fly <= 0) {
+          ctx.globalAlpha = fade * 0.35;
+          ctx.fillStyle = col;
+          const y0 = railY(4);
+          ctx.fillRect(x - 0.6, Math.min(y0, y), 1.2, Math.abs(y - y0));
+        }
+      }
+      ctx.globalCompositeOperation = "source-over";
+      ctx.globalAlpha = fade;
+
+      // The scale: one bracket for all 80.
+      if (pRails > 0 && pPack < 0.4) {
+        const a = Math.min(pRails, 1 - pPack * 2.5);
+        ctx.globalAlpha = fade * a;
+        ctx.strokeStyle = "#ffd34d";
+        ctx.lineWidth = 1.5;
+        const x = geo.x0 - 22;
+        ctx.beginPath();
+        ctx.moveTo(x + 5, railY(4));
+        ctx.lineTo(x, railY(4));
+        ctx.lineTo(x, railY(5));
+        ctx.lineTo(x + 5, railY(5));
+        ctx.stroke();
+        ctx.fillStyle = "#ffd34d";
+        ctx.textAlign = "left";
+        ctx.fillText(`one step = |d| = ${Math.abs(data.d).toFixed(5)}, shared by all 80`, geo.x0, railY(7) - 12);
+        ctx.globalAlpha = fade;
+      }
+
+      // The block: 34 cells, filled as the codes arrive.
+      const sy = geo.stripY;
+      for (let b = 0; b < 34; b++) {
+        const x = geo.stripX + b * geo.cell;
+        const word = Math.floor((b - 2) / 4);
+        const filled = b < 2 ? span(t, 4.8, 5.3) : ease(pPack * 1.6 - ((word * 10 + 9) / 80) * 0.6 - 0.05);
+        ctx.fillStyle = b < 2 ? `rgba(255,211,77,${0.08 + 0.55 * filled})` : `rgba(90,133,255,${0.06 + 0.5 * filled})`;
+        ctx.beginPath();
+        ctx.roundRect(x + 1, sy, geo.cell - 2, 34, 4);
+        ctx.fill();
+        if (filled > 0.5 && geo.cell > 16) {
+          ctx.fillStyle = b < 2 ? "#141413" : "#eef0f6";
+          ctx.textAlign = "center";
+          ctx.fillText(hex(bytes[b]), x + geo.cell / 2, sy + 21);
+        }
+      }
+      ctx.textAlign = "left";
+      ctx.fillStyle = "#5e6476";
+      ctx.fillText("byte 0", geo.stripX, sy - 8);
+      ctx.textAlign = "right";
+      ctx.fillText("byte 33", geo.stripX + 34 * geo.cell, sy - 8);
+      ctx.textAlign = "left";
+      if (pPack > 0) {
+        ctx.fillStyle = `rgba(255,211,77,${pPack})`;
+        ctx.fillText("d", geo.stripX + geo.cell * 0.8, sy + 50);
+        ctx.fillStyle = `rgba(138,144,163,${pPack})`;
+        ctx.fillText("eight words of ten 3-bit codes", geo.stripX + geo.cell * 2.2, sy + 50);
+      }
+
+      // 160 bytes against 34.
+      if (pBars > 0) {
+        const full = w - 4;
+        const y = geo.barY + 12;
+        ctx.fillStyle = "rgba(94,100,118,0.55)";
+        ctx.beginPath();
+        ctx.roundRect(2, y, full * ease(pBars), 14, 4);
+        ctx.fill();
+        ctx.fillStyle = "#5a85ff";
+        ctx.beginPath();
+        ctx.roundRect(2, y + 22, full * (34 / 160) * ease(span(t, 8.6, 9.8)), 14, 4);
+        ctx.fill();
+        ctx.fillStyle = "#c6cad6";
+        ctx.fillText("16-bit: 160 bytes", 8, y - 6);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(`PN3: 34 bytes · ${(160 / 34).toFixed(1)}× smaller`, 8 + full * (34 / 160) + 8, y + 33);
+      }
+      ctx.globalAlpha = 1;
+
+      const step = t >= 8 ? 4 : t >= 5 ? 3 : t >= 3.4 ? 2 : t >= 1.7 ? 1 : 0;
+      chips.forEach((c, i) => c.classList.toggle("on", i === step));
+    };
+    let ctl: ReturnType<typeof loop> | null = null;
+    S = crisp(canvas, (s) => {
+      S = s;
+      layout(s);
+      ctl?.redraw();
+    });
+    ctl = loop(root, PERIOD, draw, 9.9);
+    chips.forEach((c) => c.addEventListener("click", () => ctl?.seek(Number(c.dataset.seek))));
+  }
+</script>

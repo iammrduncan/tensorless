@@ -1,0 +1,152 @@
+---
+// The launch targets as spec sheets, read from recipes/ (src/release.mjs) and the model data.
+import map from "../../data/model-map.json";
+import { recipes, release } from "../../release.mjs";
+
+const copyIcon = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 10.5h-.5A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`;
+const types = (col: number) => {
+  const c: Record<string, number> = {};
+  for (const l of map.layers) if (l.kind !== "nextn") for (const t of l.t) if ((t[col + 1] as number) > 1e6) c[t[col] as string] = (c[t[col] as string] ?? 0) + 1;
+  return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ×${n}`).join(", ");
+};
+const about: Record<string, { what: string; types: string; rotated: string }> = {
+  pn3: {
+    what: "Qwen3.8-27B in PN, our P100-native weight format: pn3t on most weight matrices, pn4t where they need it, and 19 more raised to pn4t (the mix P0k+19).",
+    types: types(3),
+    rotated: `all ${map.rotation.count} PN tensors`,
+  },
+  q3floor: {
+    what: "Unsloth's UD-IQ3_XXS of Qwen3.8-27B with its 91 sub-3-bit tensors raised to IQ3_XXS: a 3-bit floor, in standard llama.cpp types. The model the P100 kernels were first tuned on.",
+    types: types(5),
+    rotated: "none",
+  },
+};
+const cards = recipes
+  .filter((r) => r.status === "released")
+  .map((r) => ({
+    repo: r.model.hf_repo,
+    name: r.model.name,
+    title: r.model.hf_repo.split("/")[1].replace(/-GGUF$/, ""),
+    ...about[r.model.name],
+    size: (r.model.size_bytes / 2 ** 30).toFixed(2),
+    measured: release.measured[r.model.hf_repo],
+    receipt: r.receipt.decode_tps,
+    perToken: (map.per_token_bytes[r.model.name === "pn3" ? "pn3" : "q3floor"] / 2 ** 30).toFixed(2),
+    license: r.model.license.split(" (")[0],
+    cmd: `tensorless run ${r.model.hf_repo}`,
+  }));
+---
+
+<section class="section" id="models" aria-labelledby="models-title">
+  <div class="wrap">
+    <p class="label" data-reveal>Launch targets</p>
+    <h2 id="models-title" class="h2" data-reveal>Two models, one card, one engine.</h2>
+    <p class="lede" data-reveal>
+      Each target is a recipe: one model on one card, with the exact image, file and settings that were measured. Name it by its
+      Hugging Face repository, or by its short name.
+    </p>
+    <div class="cards">
+      {
+        cards.map((c, i) => (
+          <article class="card panel" data-reveal style={`--d:${i * 0.06}s`}>
+            <h3 class="mono">{c.title}</h3>
+            <p class="what small">{c.what}</p>
+            <dl>
+              <div><dt>decode, published image</dt><dd><b>{c.measured.toFixed(2)} tok/s</b></dd></div>
+              <div><dt>32K / 65K</dt><dd>{c.receipt.ctx_32k ? `${c.receipt.ctx_32k} / ${c.receipt.ctx_65k} tok/s, on the climb's starting commit` : "not measured yet"}</dd></div>
+              <div><dt>file</dt><dd>{c.size} GiB</dd></div>
+              <div><dt>read per token</dt><dd>{c.perToken} GiB</dd></div>
+              <div><dt>weight types</dt><dd class="mono">{c.types}</dd></div>
+              <div><dt>inputs rotated</dt><dd>{c.rotated}</dd></div>
+              <div><dt>license</dt><dd>{c.license}</dd></div>
+              <div><dt>short name</dt><dd class="mono">{c.name}</dd></div>
+            </dl>
+            <div class="cmd">
+              <code>{c.cmd}</code>
+              <button class="copy" type="button" data-copy={c.cmd} aria-label={`Copy: ${c.cmd}`} set:html={copyIcon} />
+            </div>
+            <p class="links small">
+              <a href={`https://huggingface.co/${c.repo}`}>On Hugging Face</a>
+              <a href="/docs/reference/launch-targets/">Launch targets reference</a>
+            </p>
+          </article>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 2rem;
+  }
+  .card {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 1.3rem 1.3rem 1.2rem;
+    box-shadow: none;
+  }
+  h3 {
+    margin: 0;
+    font-size: 1rem;
+    word-break: break-all;
+  }
+  .what {
+    margin: 0.5rem 0 0;
+  }
+  dl {
+    margin: 1rem 0 0;
+  }
+  dl div {
+    display: grid;
+    grid-template-columns: 9.5rem 1fr;
+    gap: 0.8rem;
+    padding: 0.5rem 0;
+    border-top: 1px solid var(--rule);
+    font-size: 0.86rem;
+  }
+  dt {
+    color: var(--muted);
+  }
+  dd {
+    margin: 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  dd.mono {
+    font-size: 0.78rem;
+  }
+  dd b {
+    font-weight: 650;
+  }
+  .cmd {
+    margin-top: auto;
+    background: var(--panel-2);
+  }
+  dl + .cmd {
+    margin-top: 1rem;
+  }
+  .cmd code {
+    font-size: 0.74rem;
+  }
+  .links {
+    display: flex;
+    gap: 1.2rem;
+    margin: 0.8rem 0 0;
+  }
+  .links a {
+    color: var(--ink-2);
+  }
+  @media (max-width: 860px) {
+    .cards {
+      grid-template-columns: 1fr;
+    }
+    dl div {
+      grid-template-columns: 8rem 1fr;
+    }
+  }
+</style>

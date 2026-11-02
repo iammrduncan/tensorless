@@ -1,0 +1,219 @@
+---
+// The hero: the claim and the commands on the left, the model as a tower of light on the right
+// (Tower.astro, real data), and under it a plain-words key to what the tower shows.
+import { release } from "../../release.mjs";
+import Tower from "./Tower.astro";
+
+const install = "curl -fsSL https://tensorless.dev/install.sh | sh";
+const run = "tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF";
+const copyIcon = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 10.5h-.5A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`;
+const key = [
+  ["sw-floor", "Floors", "the model's 64 layers, each built from its real weight matrices, drawn to shape."],
+  ["sw-dots", "Dots", "about 200 KB of real weights each: blue stored in 3 bits, violet in 4, gold the 19 parts given the extra bit."],
+  ["sw-comet", "The comet", "one word being written. It reads every weight once, in order: 30 times a second on the real card."],
+  ["sw-trace", "Traces", "the path each word's activations took, out of the residual stream, through each layer and back. Older words fade."],
+  ["sw-ring", "Rings", "the engine turning an input before it reads PN weights: 4 times a layer."],
+  ["sw-vocab", "Base and top", "the 248,320-token vocabulary. The real prompt's tokens are joined in order at the base; the top is where every token is scored."],
+];
+---
+
+<section class="hero" aria-labelledby="hero-title">
+  <div class="stage-box">
+    <Tower />
+    <div class="shade" aria-hidden="true"></div>
+    <div class="wrap copy-box">
+      <div class="intro">
+        <p class="eyebrow mono">Custom engine and quantization for the Tesla P100</p>
+        <h1 id="hero-title">A $100 GPU card.<br />We made it fly.</h1>
+        <p class="sub">
+          tensorless runs Qwen3.8-27B on an NVIDIA Tesla P100 at <b>30 tokens a second</b>, in one command. The model is tuned for
+          the card, and pinned to the engine it was tuned with.
+        </p>
+        <div class="cmds">
+          <div class="cmd">
+            <code>{install}</code>
+            <button class="copy" type="button" data-copy={install} aria-label="Copy the install command" set:html={copyIcon} />
+          </div>
+          <div class="cmd">
+            <code>{run}</code>
+            <button class="copy" type="button" data-copy={run} aria-label="Copy the run command" set:html={copyIcon} />
+          </div>
+        </div>
+        <div class="ctas">
+          <a class="btn btn-light" href="/docs/tutorials/first-model/">
+            Run your first model
+            <svg viewBox="0 0 20 20" aria-hidden="true"><path fill="currentColor" d="M11.3 4.3a1 1 0 0 1 1.4 0l5 5a1 1 0 0 1 0 1.4l-5 5a1 1 0 0 1-1.4-1.4l3.3-3.3H3a1 1 0 1 1 0-2h11.6l-3.3-3.3a1 1 0 0 1 0-1.4Z"/></svg>
+          </a>
+          <a class="btn" href="/docs/">Read the docs</a>
+        </div>
+        <p class="meta">v{release.launcher} · Linux x86_64 · podman or docker · Apache-2.0</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap key">
+    <p class="label">What you're looking at · every dot is real</p>
+    <ul>
+      {key.map(([cls, title, text]) => <li><i class={`sw ${cls}`}></i><span><b>{title}:</b> {text}</span></li>)}
+    </ul>
+  </div>
+</section>
+
+<style>
+  .hero {
+    border-bottom: 1px solid var(--rule);
+  }
+  .stage-box {
+    position: relative;
+    height: min(92vh, 880px);
+    min-height: 640px;
+    background: #05060b;
+  }
+  .shade {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: linear-gradient(90deg, rgba(5, 6, 11, 0.92) 0%, rgba(5, 6, 11, 0.7) 32%, rgba(5, 6, 11, 0) 56%);
+  }
+  .copy-box {
+    position: relative;
+    z-index: 2;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    pointer-events: none;
+  }
+  .intro {
+    max-width: 34rem;
+    pointer-events: auto;
+  }
+  .eyebrow {
+    margin: 0 0 1.2rem;
+    font-size: 0.72rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(2.6rem, 5vw, 4.2rem);
+    line-height: 1.02;
+    letter-spacing: -0.045em;
+    font-weight: 700;
+    color: #fff;
+  }
+  .sub {
+    margin: 1.3rem 0 0;
+    color: var(--ink-2);
+    font-size: 1.08rem;
+    line-height: 1.6;
+  }
+  .sub b {
+    color: #fff;
+  }
+  .cmds {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 1.7rem;
+  }
+  .cmds .cmd {
+    background: rgba(14, 16, 24, 0.82);
+    border-color: var(--rule-2);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .ctas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.6rem;
+    margin-top: 1.5rem;
+  }
+  .meta {
+    margin: 1rem 0 0;
+    font-size: 0.8rem;
+    color: var(--dim);
+  }
+  .key {
+    padding-block: 1.8rem 2.2rem;
+  }
+  .key ul {
+    list-style: none;
+    margin: 0.9rem 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.9rem 2rem;
+  }
+  .key li {
+    display: grid;
+    grid-template-columns: 14px 1fr;
+    gap: 0.65rem;
+    font-size: 0.86rem;
+    color: var(--muted);
+  }
+  .key b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .key .sw {
+    margin-top: 0.32rem;
+    width: 12px;
+    height: 12px;
+  }
+  .sw-floor {
+    background: linear-gradient(#8fa2ff 0 2px, transparent 2px 5px, #8fa2ff 5px 7px, transparent 7px 10px, #8fa2ff 10px 12px);
+  }
+  .sw-dots {
+    background: conic-gradient(#4d7cff 0 50%, #a66bff 50% 82%, #ffd34d 82%);
+    border-radius: 50%;
+  }
+  .sw-comet {
+    background: radial-gradient(circle, #fff 0 30%, #7d8dff 60%, transparent 72%);
+    border-radius: 50%;
+  }
+  .sw-trace {
+    background: linear-gradient(90deg, #5a9eff, #b880ff, #ffd873);
+    height: 3px !important;
+    margin-top: 0.55rem !important;
+    border-radius: 2px;
+  }
+  .sw-ring {
+    border: 2px solid #ffe59e;
+    border-radius: 50%;
+  }
+  .sw-vocab {
+    border: 2px dotted #2fd1b2;
+    border-radius: 50%;
+  }
+  @media (max-width: 900px) {
+    .stage-box {
+      height: auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .stage-box :global(.stage) {
+      position: relative;
+      height: 74vh;
+      min-height: 520px;
+      order: 2;
+    }
+    .shade {
+      display: none;
+    }
+    .copy-box {
+      order: 1;
+      height: auto;
+      padding-block: 2.5rem 1.5rem;
+    }
+    .key ul {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (min-width: 901px) and (max-width: 1180px) {
+    .key ul {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+</style>

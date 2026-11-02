@@ -1,0 +1,994 @@
+---
+// The model as a tower of light, built from real data (src/data/model-map.json, read from the GGUF
+// headers). One floor per layer; one panel per weight tensor, with its real shape, a dot for every
+// ~200 KB of its real weights, coloured by its real format. A token's activation leaves the
+// residual stream (the spine), sweeps across each tensor as it is read, in the real order, rejoins
+// the stream, and climbs to the head. Each token leaves a trace that fades over the next ones.
+// Rings mark the engine's real rotation points; attention floors grow KV beams; DeltaNet floors
+// pulse their fixed state. The base ring is the vocabulary, with the bench prompt's real tokens
+// joined in order; the top ring is the head scoring all of them. Timing follows the bytes read.
+import map from "../../data/model-map.json";
+import { release } from "../../release.mjs";
+
+const payload = {
+  layers: map.layers,
+  globals: map.globals,
+  promoted: map.promoted,
+  per_token_bytes: map.per_token_bytes,
+  vocab: map.dims.vocab,
+  prompt: map.prompt.tokens.map((t) => t[0]),
+  tps: {
+    pn3: release.measured["iamMrDuncan/Qwen3.8-27B-PN3-GGUF"],
+    q3floor: release.measured["iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF"],
+  },
+};
+---
+
+<div class="stage" data-tower>
+  <canvas data-tower-canvas aria-hidden="true"></canvas>
+  <div class="fallback" data-tower-fallback hidden>This view needs WebGL.</div>
+
+  <div class="ctl" role="group" aria-label="Animation controls">
+    <div class="seg" role="group" aria-label="Model">
+      <button type="button" data-model="pn3" aria-pressed="true">PN3</button>
+      <button type="button" data-model="q3floor" aria-pressed="false">Q3Floor</button>
+    </div>
+    <div class="seg" role="group" aria-label="Speed">
+      <button type="button" data-speed="slow" aria-pressed="true">Slow motion</button>
+      <button type="button" data-speed="real" aria-pressed="false">Real speed</button>
+    </div>
+  </div>
+
+  <div class="hud mono" aria-live="off">
+    <div class="cell">
+      <p class="k" data-phase>prefill</p>
+      <p class="big" data-floor>layer 0 of 64</p>
+      <p class="line" data-what>Gated DeltaNet · ffn_gate · pn3t</p>
+    </div>
+    <div class="cell r">
+      <p class="k">decode, one P100</p>
+      <p class="big"><span data-tps>30.03</span><small> tok/s</small></p>
+      <p class="line"><span data-gb>11.22</span> GiB of weights read per token</p>
+    </div>
+  </div>
+  <script type="application/json" data-tower-data set:html={JSON.stringify(payload)} />
+</div>
+
+<style>
+  .stage {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    color: #e9ecf5;
+  }
+  canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+    touch-action: pan-y;
+  }
+  canvas:active {
+    cursor: grabbing;
+  }
+  .fallback[hidden] {
+    display: none;
+  }
+  .fallback {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: #8b90a3;
+  }
+  .ctl {
+    position: absolute;
+    z-index: 3;
+    top: 1rem;
+    right: 1.2rem;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+  .seg {
+    display: inline-flex;
+    padding: 2px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    background: rgba(8, 10, 16, 0.55);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+  .seg button {
+    border: 0;
+    background: transparent;
+    color: #8f95aa;
+    font: 500 0.76rem var(--sans);
+    padding: 0.3rem 0.62rem;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+  .stage::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 9rem;
+    z-index: 2;
+    pointer-events: none;
+    background: linear-gradient(transparent, rgba(5, 6, 11, 0.88));
+  }
+  .hud {
+    position: absolute;
+    z-index: 3;
+    right: 1.2rem;
+    bottom: 1.1rem;
+    display: flex;
+    gap: 2rem;
+    pointer-events: none;
+  }
+  .cell {
+    width: 15.5rem;
+  }
+  .cell.r {
+    width: 12.5rem;
+    text-align: right;
+  }
+  .hud p {
+    margin: 0;
+  }
+  .k {
+    height: 1.1rem;
+    font-size: 0.64rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #737a90;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .big {
+    height: 1.35em;
+    font-size: 1.45rem;
+    line-height: 1.35;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: #fff;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .big small {
+    font-size: 0.5em;
+    color: #8f95aa;
+    font-weight: 500;
+  }
+  .line {
+    height: 1.2rem;
+    font-size: 0.7rem;
+    color: #a9afc2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  @media (max-width: 900px) {
+    .ctl {
+      left: 0.75rem;
+      right: 0.75rem;
+      top: 0.75rem;
+      justify-content: center;
+    }
+    .hud {
+      left: 0.9rem;
+      right: 0.9rem;
+      bottom: 0.9rem;
+      justify-content: space-between;
+      gap: 0.8rem;
+    }
+    .cell,
+    .cell.r {
+      width: auto;
+      min-width: 0;
+      flex: 1;
+    }
+    .big {
+      font-size: 1.1rem;
+    }
+  }
+</style>
+
+<script>
+  import * as THREE from "three";
+  import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+  import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+  import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+  import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+  import { motion, onVisible } from "../../scripts/motion";
+
+  type Row = [string, number, number, string, number, string, number, number];
+  type Data = {
+    layers: { kind: string; t: Row[] }[];
+    globals: Row[];
+    promoted: string[];
+    per_token_bytes: Record<string, number>;
+    vocab: number;
+    prompt: number[];
+    tps: Record<string, number>;
+  };
+  type Model = "pn3" | "q3floor";
+
+  // ---- constants ---------------------------------------------------------------------------------
+  const COLORS: Record<string, number> = {
+    pn3t: 0x4d7cff, pn4t: 0xa66bff, promoted: 0xffd34d, Q3_K: 0x2fd1b2, Q4_K: 0x25b89f, Q5_K: 0x1f9e8a,
+    Q6_K: 0x1a8f7c, IQ3_XXS: 0xff9a4d, IQ3_S: 0xff7a3d, IQ4_XS: 0xea5a2a, Q8_0: 0xffb547,
+  };
+  const KIND: Record<string, string> = { deltanet: "Gated DeltaNet", attention: "attention" };
+  const GROUP: Record<string, string> = {
+    attn_qkv: "in", attn_gate: "in", attn_q: "in", attn_k: "in", attn_v: "in",
+    ssm_out: "mix", attn_output: "mix", ffn_gate: "ffn", ffn_up: "ffn", ffn_down: "down",
+  };
+  const FLOOR = 0.52; // height between floors
+  const U = 0.78 / 2048; // world units per matrix dimension
+  const R = 12; // vocabulary rings
+  const GiB = 2 ** 30;
+  const HOP_SHARE = 0.12; // of a pass, spent moving between tensors; the rest follows the bytes
+  const TRACES = 14; // tokens of history kept as traces
+  const VARIANTS = 24; // distinct routes, so traces do not overlap exactly
+
+  // ---- shaders -----------------------------------------------------------------------------------
+  const common = /* glsl */ `
+    uniform float uPhase; uniform float uPixel; uniform float uLit; uniform float uTime; uniform float uFocus;
+    // Floors near the token stay sharp; the rest of the tower recedes.
+    float focus(float y) { float d = (y - uFocus) / 7.0; return mix(0.28, 1.0, exp(-d * d)); }
+    float reading(vec2 r) { return step(fract(uPhase - r.x), max(r.y - r.x, 1e-5)); }
+    float afterglow(vec2 r) { return exp(-fract(uPhase - r.y) * 6.0); }`;
+  const dotsVert = /* glsl */ `${common}
+    attribute vec3 color; attribute vec2 aRange; attribute float aSize; attribute float aSeed;
+    varying vec3 vColor; varying float vAlpha;
+    void main() {
+      float rd = reading(aRange);
+      float glow = max(rd, afterglow(aRange));
+      float tw = 0.86 + 0.14 * sin(uTime * 1.7 + aSeed * 6.2831);
+      float b = max(mix(0.08, 1.0, glow) * focus(position.y), uLit * 0.55) * tw;
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = aSize * uPixel * (1.0 + 0.6 * rd) / -mv.z;
+      gl_Position = projectionMatrix * mv;
+      vColor = color * b + vec3(0.5) * rd;
+      vAlpha = b;
+    }`;
+  const dotsFrag = /* glsl */ `
+    varying vec3 vColor; varying float vAlpha;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      if (d > 0.5) discard;
+      gl_FragColor = vec4(vColor, smoothstep(0.5, 0.05, d) * vAlpha);
+    }`;
+  const edgeVert = /* glsl */ `${common}
+    attribute vec3 color; attribute vec2 aRange;
+    varying vec3 vColor; varying float vAlpha;
+    void main() {
+      float glow = max(reading(aRange), afterglow(aRange));
+      vAlpha = max(mix(0.1, 0.9, glow) * focus(position.y), uLit * 0.35);
+      vColor = color;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`;
+  const edgeFrag = /* glsl */ `
+    varying vec3 vColor; varying float vAlpha;
+    void main() { gl_FragColor = vec4(vColor, vAlpha); }`;
+  const ringVert = /* glsl */ `${common}
+    attribute vec3 aCenter; attribute float aAngle; attribute float aStart;
+    varying float vAlpha;
+    void main() {
+      float t = fract(uPhase - aStart) / 0.028;
+      float on = step(t, 1.0);
+      float r = 0.25 + t * 2.8;
+      vec3 p = aCenter + vec3(cos(aAngle) * r, 0.0, sin(aAngle) * r);
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      gl_PointSize = 0.08 * uPixel * on / -mv.z;
+      gl_Position = projectionMatrix * mv;
+      vAlpha = on * (1.0 - t) * (1.0 - t);
+    }`;
+  const ringFrag = /* glsl */ `
+    varying float vAlpha;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      if (d > 0.5) discard;
+      gl_FragColor = vec4(1.0, 0.9, 0.62, smoothstep(0.5, 0.0, d) * vAlpha);
+    }`;
+  const kvVert = /* glsl */ `${common}
+    uniform float uKV; attribute float aIndex; attribute vec2 aRange;
+    varying float vAlpha;
+    void main() {
+      float on = step(aIndex, uKV);
+      float glow = max(reading(aRange), afterglow(aRange));
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      gl_PointSize = 0.075 * uPixel * on / -mv.z;
+      gl_Position = projectionMatrix * mv;
+      vAlpha = on * max(mix(0.3, 1.0, glow), uLit * 0.6);
+    }`;
+  const kvFrag = /* glsl */ `
+    varying float vAlpha;
+    void main() {
+      float d = length(gl_PointCoord - 0.5);
+      if (d > 0.5) discard;
+      gl_FragColor = vec4(0.42, 0.72, 1.0, smoothstep(0.5, 0.0, d) * vAlpha);
+    }`;
+  // A token's trace: drawn up to the comet while it climbs, then kept and faded over later tokens.
+  const traceVert = /* glsl */ `
+    uniform float uHead; uniform float uLive; uniform float uAlpha;
+    attribute float aT;
+    varying float vA; varying float vT;
+    void main() {
+      vT = aT;
+      float behind = uHead - aT;
+      float live = behind < 0.0 ? 0.0 : 0.045 + 0.95 * exp(-behind * 42.0);
+      vA = mix(uAlpha, live, uLive);
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`;
+  const traceFrag = /* glsl */ `
+    varying float vA; varying float vT;
+    void main() {
+      vec3 lo = vec3(0.35, 0.62, 1.0);
+      vec3 mid = vec3(0.72, 0.5, 1.0);
+      vec3 hi = vec3(1.0, 0.85, 0.45);
+      vec3 c = vT < 0.5 ? mix(lo, mid, vT * 2.0) : mix(mid, hi, vT * 2.0 - 1.0);
+      if (vA < 0.004) discard;
+      gl_FragColor = vec4(c, vA);
+    }`;
+  const chordVert = /* glsl */ `
+    uniform float uDraw; uniform float uAlpha; attribute float aI;
+    varying float vA;
+    void main() {
+      vA = step(aI, uDraw) * uAlpha;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`;
+  const chordFrag = /* glsl */ `
+    varying float vA;
+    void main() { if (vA < 0.004) discard; gl_FragColor = vec4(0.55, 0.95, 0.88, vA); }`;
+
+  // ---- setup -------------------------------------------------------------------------------------
+  const root = document.querySelector<HTMLElement>("[data-tower]");
+  const canvas = root?.querySelector<HTMLCanvasElement>("[data-tower-canvas]");
+  const D: Data | null = root ? JSON.parse(root.querySelector("[data-tower-data]")!.textContent!) : null;
+  const hasGL = (() => {
+    try {
+      const c = document.createElement("canvas");
+      return !!(c.getContext("webgl2") || c.getContext("webgl"));
+    } catch {
+      return false;
+    }
+  })();
+
+  if (root && canvas && D && hasGL) {
+    const $ = (s: string) => root.querySelector<HTMLElement>(s)!;
+    const narrow = () => root.clientWidth < 900;
+    let model: Model = "pn3";
+    let speed: "slow" | "real" = "slow";
+
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: "high-performance" });
+    renderer.setClearColor(0x05060b, 1);
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x05060b, 0.012);
+    const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 500);
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.7, 0.22, 0.24);
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
+
+    const shared = { uPhase: { value: 0 }, uPixel: { value: 600 }, uLit: { value: 0 }, uTime: { value: 0 }, uKV: { value: 0 }, uFocus: { value: 0 } };
+    const mat = (vertexShader: string, fragmentShader: string) =>
+      new THREE.ShaderMaterial({ uniforms: shared, vertexShader, fragmentShader, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+
+    // ---- one model's scene ------------------------------------------------------------------------
+    type Read = { name: string; floor: number; kind: string; type: string; bytes: number; s: number; e: number };
+    type Route = { pos: Float32Array; t: Float32Array };
+    type Built = { group: THREE.Group; reads: Read[]; routes: Route[]; top: number };
+    let built: Built | null = null;
+    const traces: { line: THREE.Line; mat: THREE.ShaderMaterial; variant: number }[] = [];
+    let chordMat: THREE.ShaderMaterial | null = null;
+
+    function rand(seed: number) {
+      let s = seed >>> 0;
+      return () => {
+        s = (s * 1664525 + 1013904223) >>> 0;
+        return s / 4294967296;
+      };
+    }
+
+    function build(m: Model): Built {
+      const group = new THREE.Group();
+      const rnd = rand(7);
+      const promoted = new Set(D!.promoted);
+      const perDot = narrow() ? 600_000 : 260_000;
+      const ti = m === "pn3" ? 3 : 5;
+      const n = D!.layers.length - 1; // the MTP layer is not loaded
+      const rows = (r: Row) => ({ name: r[0], inN: r[1], outN: r[2], type: r[ti] as string, bytes: r[ti + 1] as number, rot: m === "pn3" && r[7] === 1 });
+      const emb = rows(D!.globals[0]);
+      const head = rows(D!.globals[2]);
+
+      // Plan each floor: the mixer's matrices left (inputs above, output below), the FFN right.
+      type Panel = { name: string; type: string; bytes: number; x: number; z: number; w: number; d: number; rot: boolean; prom: boolean; group: string; along: "x" | "z" };
+      type Plan = { y: number; kind: string; panels: Panel[]; spine: [number, number]; width: number };
+      const plans: Plan[] = [];
+      for (let f = 0; f < n; f++) {
+        const L = D!.layers[f];
+        const big = L.t.map(rows).filter((t) => t.bytes > 1_000_000);
+        const panels: Panel[] = [];
+        const P = (t: (typeof big)[number], x: number, z: number, group: string, along: "x" | "z"): Panel => ({
+          name: t.name, type: t.type, bytes: t.bytes, x, z, w: t.outN * U, d: t.inN * U, rot: t.rot, prom: false, group, along,
+        });
+        let x = 0;
+        for (const t of big.filter((t) => GROUP[t.name] === "in")) {
+          panels.push(P(t, x, -t.inN * U, "in", "x"));
+          x += t.outN * U + 0.1;
+        }
+        let x2 = 0;
+        for (const t of big.filter((t) => GROUP[t.name] === "mix")) {
+          panels.push(P(t, x2, 0.16, "mix", "x"));
+          x2 += t.outN * U + 0.1;
+        }
+        const mixW = Math.max(x, x2);
+        const fx = mixW + 0.9;
+        const gate = big.find((t) => t.name === "ffn_gate");
+        const up = big.find((t) => t.name === "ffn_up");
+        const down = big.find((t) => t.name === "ffn_down");
+        if (gate) panels.push(P(gate, fx, -gate.inN * U, "ffn", "x"));
+        if (up) panels.push(P(up, fx, 0.16, "ffn", "x"));
+        const dx = fx + (gate ? gate.outN * U : 0) + 0.24;
+        if (down) panels.push(P(down, dx, -(down.inN * U) / 2 + 0.08, "down", "z"));
+        const width = dx + (down ? down.outN * U : 0);
+        const ox = -width / 2;
+        for (const p of panels) {
+          p.x += ox;
+          p.prom = m === "pn3" && promoted.has(`blk.${f}.${p.name}.weight`);
+        }
+        plans.push({ y: f * FLOOR, kind: L.kind, panels, spine: [ox + mixW + 0.45, 0.08], width });
+      }
+      const top = (n - 1) * FLOOR;
+
+      // The reading order and each read's share of a pass: hops get a small fixed share; tensor
+      // reads share the rest by their bytes, as a bandwidth-bound decode does.
+      const order: { f: number; p: Panel }[] = [];
+      for (let f = 0; f < n; f++) {
+        for (const t of D!.layers[f].t.map(rows)) {
+          const p = plans[f].panels.find((q) => q.name === t.name);
+          if (p) order.push({ f, p });
+        }
+      }
+      const readBytes = order.reduce((a, o) => a + o.p.bytes, 0) + head.bytes;
+      const hopT = HOP_SHARE / (order.length + 2);
+      const bytesT = (1 - HOP_SHARE) / readBytes;
+      const reads: Read[] = [];
+      const span = new Map<Panel, [number, number]>();
+      let t = hopT; // the hop from the embedding row to the first floor
+      for (const o of order) {
+        const s = t;
+        t += o.p.bytes * bytesT;
+        span.set(o.p, [s, t]);
+        reads.push({ name: o.p.name, floor: o.f, kind: plans[o.f].kind, type: o.p.prom ? "pn4t, promoted" : o.p.type, bytes: o.p.bytes, s, e: t });
+        t += hopT;
+      }
+      const headS = t;
+      t += head.bytes * bytesT;
+      const headE = t;
+      reads.push({ name: "output", floor: -1, kind: "head", type: head.type, bytes: head.bytes, s: headS, e: headE });
+
+      // Dots and panel outlines.
+      const pos: number[] = [], col: number[] = [], rng: number[] = [], size: number[] = [], seed: number[] = [];
+      const ePos: number[] = [], eCol: number[] = [], eRng: number[] = [];
+      const c = new THREE.Color();
+      const dot = (x: number, y: number, z: number, color: number, s: number, e: number, sz: number) => {
+        pos.push(x, y, z);
+        c.setHex(color);
+        col.push(c.r, c.g, c.b);
+        rng.push(s, e);
+        size.push(sz);
+        seed.push(rnd());
+      };
+      const outline = (x0: number, z0: number, x1: number, z1: number, y: number, color: number, s: number, e: number) => {
+        c.setHex(color);
+        const k = [[x0, z0], [x1, z0], [x1, z1], [x0, z1]];
+        for (let i = 0; i < 4; i++) {
+          const a = k[i], b = k[(i + 1) % 4];
+          ePos.push(a[0], y, a[1], b[0], y, b[1]);
+          eCol.push(c.r, c.g, c.b, c.r, c.g, c.b);
+          eRng.push(s, e, s, e);
+        }
+      };
+      const ringC: number[] = [], ringA: number[] = [], ringS: number[] = [];
+      const kvP: number[] = [], kvI: number[] = [], kvR: number[] = [];
+      for (const pl of plans) {
+        let lastGroup = "";
+        let floorStart = 1;
+        for (const p of pl.panels) {
+          const [s, e] = span.get(p)!;
+          floorStart = Math.min(floorStart, s);
+          const color = p.prom ? COLORS.promoted : COLORS[p.type] ?? 0x888888;
+          const count = Math.max(6, Math.round(p.bytes / perDot));
+          const cols = Math.max(1, Math.round(Math.sqrt((count * p.w) / p.d)));
+          const rowsN = Math.ceil(count / cols);
+          for (let k = 0; k < count; k++) {
+            const i = k % cols, j = Math.floor(k / cols);
+            dot(p.x + ((i + 0.5 + (rnd() - 0.5) * 0.7) / cols) * p.w, pl.y + (rnd() - 0.5) * 0.025, p.z + ((j + 0.5 + (rnd() - 0.5) * 0.7) / rowsN) * p.d, color, s, e, 0.05 + rnd() * 0.03);
+          }
+          outline(p.x, p.z, p.x + p.w, p.z + p.d, pl.y, color, s, e);
+          if (p.rot && p.group !== lastGroup) {
+            for (let a = 0; a < 48; a++) {
+              ringC.push(p.x + p.w / 2, pl.y + 0.02, p.z + p.d / 2);
+              ringA.push((a / 48) * Math.PI * 2);
+              ringS.push(s);
+            }
+          }
+          if (p.rot) lastGroup = p.group;
+          if (p.name === "attn_v") {
+            const vx = pl.width / 2 + 0.3;
+            for (let k = 0; k < 64; k++) {
+              kvP.push(vx + k * 0.15, pl.y, 0.4);
+              kvI.push(k);
+              kvR.push(floorStart, e);
+            }
+          }
+          if (p.name === "ssm_out") {
+            for (let k = 0; k < 25; k++) dot(-pl.width / 2 - 0.9 + (k % 5) * 0.13, pl.y, -0.3 + Math.floor(k / 5) * 0.13, 0xdfe6ff, s - 0.002, e, 0.07);
+          }
+        }
+      }
+      // Vocabulary rings: the embedding at the base, the head at the top.
+      const ringDots = narrow() ? 900 : 2400;
+      for (let k = 0; k < ringDots; k++) {
+        const a = (k / ringDots) * Math.PI * 2;
+        dot(Math.cos(a) * R, -1.6, Math.sin(a) * R, COLORS[emb.type] ?? 0x2fd1b2, 0, hopT, 0.06);
+        dot(Math.cos(a) * R, top + 1.6, Math.sin(a) * R, COLORS[head.type] ?? 0x25b89f, headS, headE, 0.06);
+      }
+      // The bench prompt's real tokens on the base ring, joined in order.
+      const chord: number[] = [], chordI: number[] = [];
+      const ids = D!.prompt;
+      const at = (id: number): [number, number] => {
+        const a = (id / D!.vocab) * Math.PI * 2;
+        return [Math.cos(a) * R, Math.sin(a) * R];
+      };
+      ids.forEach((id, i) => {
+        const [x, z] = at(id);
+        dot(x, -1.6, z, 0xffffff, 0, hopT, 0.13);
+        if (i > 0) {
+          const [px, pz] = at(ids[i - 1]);
+          chord.push(px, -1.6, pz, x, -1.6, z);
+          chordI.push(i / ids.length, i / ids.length);
+        }
+      });
+
+      const g = new THREE.BufferGeometry();
+      g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
+      g.setAttribute("aRange", new THREE.Float32BufferAttribute(rng, 2));
+      g.setAttribute("aSize", new THREE.Float32BufferAttribute(size, 1));
+      g.setAttribute("aSeed", new THREE.Float32BufferAttribute(seed, 1));
+      group.add(new THREE.Points(g, mat(dotsVert, dotsFrag)));
+
+      const eg = new THREE.BufferGeometry();
+      eg.setAttribute("position", new THREE.Float32BufferAttribute(ePos, 3));
+      eg.setAttribute("color", new THREE.Float32BufferAttribute(eCol, 3));
+      eg.setAttribute("aRange", new THREE.Float32BufferAttribute(eRng, 2));
+      group.add(new THREE.LineSegments(eg, mat(edgeVert, edgeFrag)));
+
+      if (ringA.length) {
+        const rg = new THREE.BufferGeometry();
+        rg.setAttribute("position", new THREE.Float32BufferAttribute(ringC, 3));
+        rg.setAttribute("aCenter", new THREE.Float32BufferAttribute(ringC, 3));
+        rg.setAttribute("aAngle", new THREE.Float32BufferAttribute(ringA, 1));
+        rg.setAttribute("aStart", new THREE.Float32BufferAttribute(ringS, 1));
+        const rp = new THREE.Points(rg, mat(ringVert, ringFrag));
+        rp.frustumCulled = false;
+        group.add(rp);
+      }
+      const kg = new THREE.BufferGeometry();
+      kg.setAttribute("position", new THREE.Float32BufferAttribute(kvP, 3));
+      kg.setAttribute("aIndex", new THREE.Float32BufferAttribute(kvI, 1));
+      kg.setAttribute("aRange", new THREE.Float32BufferAttribute(kvR, 2));
+      group.add(new THREE.Points(kg, mat(kvVert, kvFrag)));
+
+      const cg = new THREE.BufferGeometry();
+      cg.setAttribute("position", new THREE.Float32BufferAttribute(chord, 3));
+      cg.setAttribute("aI", new THREE.Float32BufferAttribute(chordI, 1));
+      chordMat = new THREE.ShaderMaterial({
+        uniforms: { uDraw: { value: 0 }, uAlpha: { value: 0.1 } },
+        vertexShader: chordVert,
+        fragmentShader: chordFrag,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      group.add(new THREE.LineSegments(cg, chordMat));
+
+      // The residual stream: a faint spine through every floor.
+      const spine: number[] = [];
+      for (const pl of plans) spine.push(pl.spine[0], pl.y, pl.spine[1]);
+      const sg = new THREE.BufferGeometry();
+      sg.setAttribute("position", new THREE.Float32BufferAttribute(spine, 3));
+      group.add(new THREE.Line(sg, new THREE.LineBasicMaterial({ color: 0x9fb2ff, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending, depthWrite: false })));
+
+      // Routes: for each variant, waypoints with their pass time, smoothed by a Catmull-Rom spline.
+      const routes: Route[] = [];
+      for (let v = 0; v < VARIANTS; v++) {
+        const r2 = rand(1000 + v * 97);
+        const pts: THREE.Vector3[] = [];
+        const ts: number[] = [];
+        const way = (x: number, y: number, z: number, tt: number) => {
+          pts.push(new THREE.Vector3(x, y, z));
+          ts.push(tt);
+        };
+        const a0 = r2() * Math.PI * 2;
+        way(Math.cos(a0) * R, -1.6, Math.sin(a0) * R, 0);
+        for (const pl of plans) {
+          const sorted = pl.panels.slice().sort((a, b) => span.get(a)![0] - span.get(b)![0]);
+          way(pl.spine[0], pl.y + 0.05, pl.spine[1], span.get(sorted[0])![0] - hopT * 0.5);
+          let rejoined = false;
+          for (const p of sorted) {
+            const [s, e] = span.get(p)!;
+            if (!rejoined && p.group === "ffn") {
+              // The residual add: back to the spine before the FFN.
+              way(pl.spine[0], pl.y + 0.1, pl.spine[1], s - hopT * 0.5);
+              rejoined = true;
+            }
+            const lane = 0.15 + 0.7 * r2();
+            const lift = pl.y + 0.06 + (r2() - 0.5) * 0.04;
+            if (p.along === "x") {
+              const zz = p.z + lane * p.d;
+              way(p.x, lift, zz, s);
+              way(p.x + p.w * 0.5, lift + 0.04, zz + (r2() - 0.5) * 0.2 * p.d, (s + e) / 2);
+              way(p.x + p.w, lift, zz, e);
+            } else {
+              const xx = p.x + lane * p.w;
+              way(xx, lift, p.z, s);
+              way(xx + (r2() - 0.5) * 0.2 * p.w, lift + 0.04, p.z + p.d * 0.5, (s + e) / 2);
+              way(xx, lift, p.z + p.d, e);
+            }
+          }
+        }
+        // Up to the head ring, then around it while the head is read.
+        const aH = r2() * Math.PI * 2;
+        way(Math.cos(aH) * R * 0.5, top + 1.0, Math.sin(aH) * R * 0.5, headS - hopT * 0.4);
+        const steps = 10;
+        for (let i = 0; i <= steps; i++) {
+          const a = aH + (i / steps) * Math.PI * 1.6;
+          way(Math.cos(a) * R, top + 1.6, Math.sin(a) * R, headS + (headE - headS) * (i / steps));
+        }
+        way(Math.cos(aH + Math.PI * 1.75) * R * 0.8, top + 2.4, Math.sin(aH + Math.PI * 1.75) * R * 0.8, 1);
+        for (let i = 1; i < ts.length; i++) ts[i] = Math.max(ts[i], ts[i - 1] + 1e-6);
+        const curve = new THREE.CatmullRomCurve3(pts, false, "centripetal", 0.5);
+        const per = narrow() ? 5 : 8;
+        const N = (pts.length - 1) * per + 1;
+        const Pp = new Float32Array(N * 3);
+        const T = new Float32Array(N);
+        const tmp = new THREE.Vector3();
+        for (let i = 0; i < N; i++) {
+          curve.getPoint(i / (N - 1), tmp);
+          Pp[i * 3] = tmp.x;
+          Pp[i * 3 + 1] = tmp.y;
+          Pp[i * 3 + 2] = tmp.z;
+          const seg = Math.min(pts.length - 2, Math.floor(i / per));
+          const fr = (i - seg * per) / per;
+          T[i] = ts[seg] + (ts[seg + 1] - ts[seg]) * fr;
+        }
+        routes.push({ pos: Pp, t: T });
+      }
+      return { group, reads, routes, top };
+    }
+
+    // ---- traces --------------------------------------------------------------------------------
+    function makeTraces() {
+      for (const tr of traces) {
+        scene.remove(tr.line);
+        tr.line.geometry.dispose();
+        tr.mat.dispose();
+      }
+      traces.length = 0;
+      for (let i = 0; i < TRACES; i++) {
+        const g = new THREE.BufferGeometry();
+        const m = new THREE.ShaderMaterial({
+          uniforms: { uHead: { value: 0 }, uLive: { value: 0 }, uAlpha: { value: 0 } },
+          vertexShader: traceVert,
+          fragmentShader: traceFrag,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+        const line = new THREE.Line(g, m);
+        line.frustumCulled = false;
+        scene.add(line);
+        traces.push({ line, mat: m, variant: -1 });
+        assign(i, i % VARIANTS);
+      }
+    }
+    function assign(i: number, variant: number) {
+      const tr = traces[i];
+      if (tr.variant === variant) return;
+      const r = built!.routes[variant];
+      tr.line.geometry.setAttribute("position", new THREE.BufferAttribute(r.pos, 3));
+      tr.line.geometry.setAttribute("aT", new THREE.BufferAttribute(r.t, 1));
+      tr.variant = variant;
+    }
+
+    // ---- the comet ------------------------------------------------------------------------------
+    const cometGeo = new THREE.BufferGeometry();
+    const cometPos = new Float32Array(9);
+    cometGeo.setAttribute("position", new THREE.BufferAttribute(cometPos, 3));
+    cometGeo.setAttribute("aS", new THREE.BufferAttribute(new Float32Array([0.5, 1.5, 3.4]), 1));
+    cometGeo.setAttribute("aA", new THREE.BufferAttribute(new Float32Array([1, 0.32, 0.1]), 1));
+    const comet = new THREE.Points(
+      cometGeo,
+      new THREE.ShaderMaterial({
+        uniforms: shared,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        vertexShader: `uniform float uPixel; attribute float aS; attribute float aA; varying float vA;
+          void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); gl_PointSize = aS * uPixel * 0.12 / -mv.z; gl_Position = projectionMatrix*mv; vA = aA; }`,
+        fragmentShader: `varying float vA; void main(){ float d = length(gl_PointCoord-0.5); if(d>0.5) discard; float g = exp(-d*d*18.0); gl_FragColor = vec4(mix(vec3(0.55,0.7,1.0), vec3(1.0), g), g*vA); }`,
+      }),
+    );
+    comet.frustumCulled = false;
+    scene.add(comet);
+
+    // Position on a route at pass time `ph`: binary search the sampled times, then interpolate.
+    function cometAt(r: Route, ph: number, out: Float32Array) {
+      const T = r.t;
+      let lo = 0, hi = T.length - 1;
+      while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (T[mid] <= ph) lo = mid;
+        else hi = mid;
+      }
+      const k = Math.min(1, Math.max(0, (ph - T[lo]) / Math.max(T[hi] - T[lo], 1e-9)));
+      for (let a = 0; a < 3; a++) out[a] = r.pos[lo * 3 + a] + (r.pos[hi * 3 + a] - r.pos[lo * 3 + a]) * k;
+    }
+
+    // ---- state ----------------------------------------------------------------------------------
+    let phase = 0;
+    let prefill = true;
+    let token = D.prompt.length;
+    let slot = 0;
+    let variantNext = 0;
+    let visible = false;
+    let hidden = document.visibilityState === "hidden";
+    let raf = 0;
+    let last = performance.now();
+    let hudAt = 0;
+    let angle = -0.55;
+    let spin = 0;
+    let dragging = false;
+    let lastX = 0;
+    let camY = 6;
+    let camV = 0;
+    let dpr = Math.min(window.devicePixelRatio || 1, 1.75);
+    let frames = 0;
+    let frameSum = 0;
+    let quality = 2; // 2: full; 1: lower resolution; 0: no bloom
+    const head = new Float32Array(3);
+    const PREFILL_LANES = 3;
+
+    function startPass() {
+      // Prefill sends all the prompt's tokens at once: several live traces. Decode sends one.
+      for (const tr of traces) {
+        if (tr.mat.uniforms.uLive.value > 0.5) {
+          tr.mat.uniforms.uLive.value = 0;
+          tr.mat.uniforms.uAlpha.value = prefill ? 0.03 : 0.07;
+        }
+      }
+      const lanes = prefill ? PREFILL_LANES : 1;
+      for (let l = 0; l < lanes; l++) {
+        slot = (slot + 1) % traces.length;
+        assign(slot, variantNext);
+        variantNext = (variantNext + 1) % VARIANTS;
+        const u = traces[slot].mat.uniforms;
+        u.uLive.value = 1;
+        u.uHead.value = 0;
+        u.uAlpha.value = 0;
+      }
+    }
+
+    function setModel(m: Model) {
+      if (built) {
+        scene.remove(built.group);
+        built.group.traverse((o) => {
+          const x = o as THREE.Mesh;
+          x.geometry?.dispose?.();
+          (x.material as THREE.Material | undefined)?.dispose?.();
+        });
+      }
+      model = m;
+      built = build(m);
+      scene.add(built.group);
+      makeTraces();
+      phase = 0;
+      prefill = true;
+      token = D!.prompt.length;
+      startPass();
+      $("[data-gb]").textContent = (D!.per_token_bytes[m] / GiB).toFixed(2);
+      $("[data-tps]").textContent = D!.tps[m].toFixed(2);
+    }
+
+    const passSeconds = () => (prefill ? (speed === "slow" ? 7 : 4.46) : speed === "slow" ? 8 : 1 / D!.tps[model]);
+
+    function resize() {
+      const w = root!.clientWidth, h = root!.clientHeight;
+      renderer.setPixelRatio(dpr);
+      renderer.setSize(w, h, false);
+      composer.setPixelRatio(dpr);
+      composer.setSize(w, h);
+      camera.aspect = w / h;
+      // On wide screens the tower stands to the right, beside the headline.
+      if (!narrow()) camera.setViewOffset(w, h, -w * 0.21, 0, w, h);
+      else camera.clearViewOffset();
+      camera.updateProjectionMatrix();
+      shared.uPixel.value = (h * dpr) / (2 * Math.tan((camera.fov * Math.PI) / 360));
+    }
+
+    // If frames run slow, step down: a lower resolution first, then no bloom.
+    function adapt(ms: number) {
+      frames++;
+      frameSum += ms;
+      if (frames < 90) return;
+      const avg = frameSum / frames;
+      frames = 0;
+      frameSum = 0;
+      if (avg > 24 && quality > 0) {
+        quality -= 1;
+        if (quality === 1) dpr = Math.max(1, dpr - 0.5);
+        if (quality === 0) bloom.enabled = false;
+        resize();
+      }
+    }
+
+    function frame(now: number, advance: boolean) {
+      const ms = now - last;
+      const dt = Math.min(0.05, ms / 1000);
+      last = now;
+      if (advance) {
+        adapt(ms);
+        shared.uTime.value += dt;
+        const ps = passSeconds();
+        phase += dt / ps;
+        if (phase >= 1) {
+          phase %= 1;
+          if (prefill) prefill = false;
+          else token += 1;
+          if (token >= D!.prompt.length + 256) {
+            token = D!.prompt.length;
+            prefill = true;
+          }
+          startPass();
+        }
+        const fade = Math.pow(0.82, dt / ps);
+        for (const tr of traces) if (tr.mat.uniforms.uLive.value < 0.5) tr.mat.uniforms.uAlpha.value *= fade;
+        if (!dragging) {
+          spin *= Math.pow(0.05, dt);
+          angle += dt * 0.07 + spin * dt;
+        }
+      }
+      shared.uPhase.value = phase;
+      shared.uKV.value = (Math.log2(token) / 16) * 64;
+      if (chordMat) {
+        chordMat.uniforms.uDraw.value = prefill ? phase : 1;
+        chordMat.uniforms.uAlpha.value = prefill ? 0.22 : 0.09;
+      }
+      for (const tr of traces) if (tr.mat.uniforms.uLive.value > 0.5) tr.mat.uniforms.uHead.value = phase;
+
+      // The comet: at the head of the newest live trace.
+      cometAt(built!.routes[traces[slot].variant], phase, head);
+      for (let i = 0; i < 3; i++) {
+        cometPos[i * 3] = head[0];
+        cometPos[i * 3 + 1] = head[1];
+        cometPos[i * 3 + 2] = head[2];
+      }
+      cometGeo.attributes.position.needsUpdate = true;
+
+      // The camera orbits and follows the comet's height on a critically damped spring.
+      const top = built!.top;
+      const target = speed === "real" ? top * 0.5 : Math.min(top - 5, Math.max(5, head[1]));
+      const k = 2.0;
+      camV += (k * k * (target - camY) - 2 * k * camV) * dt;
+      camY += camV * dt;
+      shared.uFocus.value = speed === "real" ? head[1] : camY;
+      const r = narrow() ? 56 : 46;
+      camera.position.set(Math.cos(angle) * r, camY + 11, Math.sin(angle) * r);
+      camera.lookAt(0, camY + 0.5, 0);
+      composer.render();
+
+      if (now - hudAt > 140) {
+        hudAt = now;
+        $("[data-phase]").textContent = prefill ? `prefill · all ${D!.prompt.length} prompt tokens at once` : `decoding token #${token + 1}`;
+        const cur = built!.reads.find((x) => phase >= x.s && phase < x.e);
+        if (cur && cur.floor >= 0) {
+          $("[data-floor]").textContent = `layer ${cur.floor} of 64`;
+          $("[data-what]").textContent = `${KIND[cur.kind] ?? cur.kind} · ${cur.name} · ${cur.type} · ${(cur.bytes / GiB).toFixed(3)} GiB`;
+        } else if (cur) {
+          $("[data-floor]").textContent = "the output head";
+          $("[data-what]").textContent = `scores all ${D!.vocab.toLocaleString("en-US")} tokens`;
+        }
+      }
+    }
+
+    function loop(now: number) {
+      frame(now, true);
+      raf = requestAnimationFrame(loop);
+    }
+    function sync() {
+      cancelAnimationFrame(raf);
+      if (visible && !hidden && motion.running) {
+        shared.uLit.value = 0;
+        last = performance.now();
+        raf = requestAnimationFrame(loop);
+        return;
+      }
+      if (!motion.running) {
+        // A still: the tower lit, a token half way up, the last tokens' traces.
+        shared.uLit.value = 1;
+        shared.uFocus.value = built!.top * 0.5;
+        prefill = false;
+        traces.forEach((tr, i) => {
+          assign(i, i % VARIANTS);
+          tr.mat.uniforms.uLive.value = 0;
+          tr.mat.uniforms.uAlpha.value = 0.02 + 0.005 * i;
+        });
+        phase = 0.55;
+      }
+      frame(performance.now(), false);
+    }
+
+    // ---- controls ---------------------------------------------------------------------------------
+    root.querySelectorAll<HTMLButtonElement>("[data-model]").forEach((b) =>
+      b.addEventListener("click", () => {
+        root.querySelectorAll("[data-model]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+        setModel(b.dataset.model as Model);
+        sync();
+      }),
+    );
+    root.querySelectorAll<HTMLButtonElement>("[data-speed]").forEach((b) =>
+      b.addEventListener("click", () => {
+        speed = b.dataset.speed as typeof speed;
+        root.querySelectorAll("[data-speed]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+      }),
+    );
+    canvas.addEventListener("pointerdown", (e) => {
+      if (e.pointerType !== "mouse") return;
+      dragging = true;
+      lastX = e.clientX;
+      canvas.setPointerCapture(e.pointerId);
+    });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const dx = (e.clientX - lastX) * 0.005;
+      angle += dx;
+      spin = dx * 30;
+      lastX = e.clientX;
+      if (!motion.running) frame(performance.now(), false);
+    });
+    canvas.addEventListener("pointerup", () => (dragging = false));
+    document.addEventListener("visibilitychange", () => {
+      hidden = document.visibilityState === "hidden";
+      sync();
+    });
+
+    setModel("pn3");
+    resize();
+    new ResizeObserver(() => {
+      resize();
+      if (!visible || !motion.running) frame(performance.now(), false);
+    }).observe(root);
+    onVisible(root, (v) => {
+      visible = v;
+      sync();
+    });
+    motion.on(sync);
+  } else if (root) {
+    root.querySelector<HTMLElement>("[data-tower-fallback]")!.hidden = false;
+  }
+</script>

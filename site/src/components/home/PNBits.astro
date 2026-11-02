@@ -1,0 +1,383 @@
+---
+// The byte-level view of real PN blocks, behind "Show the bits" (Format.astro). Layout from
+// docs/pn-format.md: 2 bytes of fp16 scale d, then eight little-endian u32 words; code t of a word
+// is at shift BITS·(t>>1) + 16·(t&1); w = d·(n − z).
+import map from "../../data/model-map.json";
+
+const payload = { blocks: map.blocks };
+---
+
+    <div class="pn" data-pn>
+  <div class="pn-top">
+    <div class="seg" role="group" aria-label="PN type">
+      <button type="button" class="mono" data-type="pn3t" aria-pressed="true">pn3t</button>
+      <button type="button" class="mono" data-type="pn4t" aria-pressed="false">pn4t</button>
+    </div>
+    <p class="where mono small" data-where></p>
+    <div class="nav">
+      <button type="button" data-block="-1" aria-label="Previous block">‹</button>
+      <span class="mono small" data-block-label>block 0</span>
+      <button type="button" data-block="1" aria-label="Next block">›</button>
+    </div>
+  </div>
+
+  <div class="bytes mono" data-bytes aria-label="The block's 34 bytes"></div>
+  <p class="byte-legend small">
+    <span><i class="sw" style="background:var(--hl)"></i>d, fp16, signed: <b class="mono" data-d></b></span>
+    <span><i class="sw" style="background:var(--t-pn3t)"></i><b class="mono" data-w></b></span>
+  </p>
+
+  <div class="halves">
+    <div><p class="half mono">bits 0–15 · even codes</p><div class="codes" data-half="0"></div></div>
+    <div><p class="half mono">bits 16–31 · odd codes</p><div class="codes" data-half="1"></div></div>
+  </div>
+
+  <div class="decode mono">
+    <span>t = <b data-t>0</b></span>
+    <span>shift = <span data-bits>3</span>·(t≫1) + 16·(t&amp;1) = <b data-shift>0</b></span>
+    <span>n = <b data-n>0</b></span>
+    <span>w = d·(n − <span data-z>4</span>) = <b data-val>0</b></span>
+  </div>
+
+  <div class="weights">
+    <p class="half mono">all <span data-nweights>80</span> weights of this block, decoded</p>
+    <div class="bars" data-bars></div>
+  </div>
+</div>
+
+<script type="application/json" data-pn-data set:html={JSON.stringify(payload)} />
+
+<style>
+  .pn {
+    padding: clamp(1rem, 3vw, 1.6rem);
+  }
+  .pn-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.8rem 1.4rem;
+  }
+  .seg {
+    display: inline-flex;
+    padding: 2px;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--panel-2);
+  }
+  .seg button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    padding: 0.3rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] {
+    background: var(--panel);
+    color: var(--ink);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+  .where {
+    margin: 0;
+    flex: 1;
+    min-width: 12rem;
+  }
+  .nav {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .nav button {
+    width: 1.9rem;
+    height: 1.9rem;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    background: var(--panel);
+    color: var(--ink-2);
+    cursor: pointer;
+    font-size: 1rem;
+  }
+  .bytes {
+    display: grid;
+    grid-template-columns: repeat(34, minmax(0, 1fr));
+    gap: 2px;
+    margin-top: 1.3rem;
+  }
+  .bytes :global(span) {
+    display: grid;
+    place-items: center;
+    height: 2rem;
+    border-radius: 3px;
+    background: var(--panel-2);
+    font-size: clamp(0.5rem, 0.95vw, 0.68rem);
+    color: var(--muted);
+  }
+  .bytes :global(span.d) {
+    background: color-mix(in srgb, var(--hl) 70%, var(--panel));
+    color: #141413;
+  }
+  .bytes :global(span.on) {
+    background: var(--t-pn3t);
+    color: #fff;
+  }
+  .byte-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.5rem;
+    margin: 0.6rem 0 0;
+    font-size: 0.8rem;
+  }
+  .byte-legend b {
+    color: var(--ink);
+    font-weight: 500;
+  }
+  .byte-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .halves {
+    display: grid;
+    gap: 0.9rem;
+    margin-top: 1.4rem;
+  }
+  .half {
+    margin: 0 0 0.4rem;
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .codes {
+    display: flex;
+    gap: 5px;
+  }
+  .codes :global(.code) {
+    flex: 3 1 0;
+    min-width: 0;
+    padding: 0.4rem 0.2rem;
+    border: 1px solid var(--rule);
+    border-radius: 7px;
+    text-align: center;
+    background: var(--panel);
+    transition: border-color 0.2s, background-color 0.2s;
+  }
+  .codes :global(.code b) {
+    display: block;
+    font: 500 clamp(0.66rem, 1.5vw, 0.95rem) var(--mono);
+    letter-spacing: 0.1em;
+  }
+  .codes :global(.code i) {
+    display: block;
+    font: normal 0.62rem var(--mono);
+    color: var(--dim);
+  }
+  .codes :global(.code.rsv) {
+    flex: 1 1 0;
+    border-style: dashed;
+    opacity: 0.6;
+  }
+  .codes :global(.code.on) {
+    border-color: var(--t-pn3t);
+    background: color-mix(in srgb, var(--t-pn3t) 10%, var(--panel));
+  }
+  .decode {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.8rem;
+    margin-top: 1.3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .decode b {
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .weights {
+    margin-top: 1.3rem;
+  }
+  .bars {
+    position: relative;
+    display: flex;
+    gap: 2px;
+    height: 84px;
+    border-block: 1px solid var(--rule);
+  }
+  .bars::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    border-top: 1px dashed var(--rule-2);
+  }
+  .bars :global(i) {
+    position: relative;
+    flex: 1 1 0;
+  }
+  .bars :global(i b) {
+    position: absolute;
+    left: 0;
+    right: 0;
+    background: var(--t-pn3t);
+    opacity: 0.5;
+    border-radius: 1px;
+  }
+  .bars :global(i.on b) {
+    opacity: 1;
+    background: var(--ink);
+  }
+  @media (max-width: 620px) {
+    .bytes {
+      grid-template-columns: repeat(17, minmax(0, 1fr));
+    }
+    .codes {
+      gap: 2px;
+    }
+    .codes :global(.code b) {
+      letter-spacing: 0;
+    }
+  }
+</style>
+
+<script>
+  import { motion, onVisible } from "../../scripts/motion";
+
+  type Block = { d: number; words: number[] };
+  type Data = { blocks: Record<string, { tensor: string; shape: number[]; blocks: Block[] }> };
+  const SPEC = {
+    pn3t: { bits: 3, per: 10, z: 4, weights: 80, reserved: true },
+    pn4t: { bits: 4, per: 8, z: 8, weights: 64, reserved: false },
+  } as const;
+  type Name = keyof typeof SPEC;
+
+  const root = document.querySelector<HTMLElement>("[data-pn]");
+  const data: Data = JSON.parse(document.querySelector("[data-pn-data]")!.textContent!);
+  if (root) {
+    const $ = (s: string) => root.querySelector<HTMLElement>(s)!;
+    let type: Name = "pn3t";
+    let bi = 0;
+    let word = 0;
+    let t = 0;
+    let timer = 0;
+    let visible = false;
+
+    // The fp16 bit pattern of d (the file stores fp16; the data file holds its exact value).
+    const fp16bits = (v: number) => {
+      const u = new Uint32Array(new Float32Array([v]).buffer)[0];
+      const sign = (u >>> 16) & 0x8000;
+      const exp = ((u >>> 23) & 0xff) - 127 + 15;
+      if (v === 0) return sign;
+      if (exp <= 0) return sign | ((((u & 0x7fffff) | 0x800000) >>> (14 - exp)) & 0x3ff);
+      return sign | (exp << 10) | ((u >>> 13) & 0x3ff);
+    };
+    const hex = (n: number) => n.toString(16).padStart(2, "0");
+    const code = (w: number, k: number, bits: number) => (w >>> (bits * (k >> 1) + 16 * (k & 1))) & ((1 << bits) - 1);
+    const fmt = (v: number) => (Object.is(v, -0) ? "−0.00000" : (v < 0 ? "−" : "") + Math.abs(v).toFixed(5));
+
+    function render() {
+      const spec = SPEC[type];
+      const set = data.blocks[type];
+      const blk = set.blocks[bi];
+      const total = (set.shape[0] * set.shape[1]) / spec.weights;
+      $("[data-where]").textContent = `${set.tensor} · ${set.shape[0].toLocaleString("en-US")} → ${set.shape[1].toLocaleString("en-US")} · block ${bi} of ${total.toLocaleString("en-US")}`;
+      $("[data-block-label]").textContent = `block ${bi}`;
+      const db = fp16bits(blk.d);
+      const bytes = [db & 0xff, db >>> 8];
+      blk.words.forEach((w) => bytes.push(w & 0xff, (w >>> 8) & 0xff, (w >>> 16) & 0xff, w >>> 24));
+      $("[data-bytes]").innerHTML = bytes
+        .map((b, i) => `<span class="${i < 2 ? "d" : i >= 2 + 4 * word && i < 6 + 4 * word ? "on" : ""}">${hex(b)}</span>`)
+        .join("");
+      $("[data-d]").textContent = `0x${hex(db >>> 8)}${hex(db & 0xff)} = ${fmt(blk.d)}`;
+      const w = blk.words[word];
+      $("[data-w]").textContent = `word ${word} = 0x${w.toString(16).padStart(8, "0")}`;
+      [0, 1].forEach((h) => {
+        let html = "";
+        for (let j = 0; j < spec.per / 2; j++) {
+          const k = 2 * j + h;
+          html += `<span class="code" data-code="${k}"><b>${code(w, k, spec.bits).toString(2).padStart(spec.bits, "0")}</b><i>t=${k}</i></span>`;
+        }
+        if (spec.reserved) html += `<span class="code rsv"><b>${(w >>> (h ? 31 : 15)) & 1}</b><i>bit ${h ? 31 : 15}</i></span>`;
+        root!.querySelector<HTMLElement>(`[data-half='${h}']`)!.innerHTML = html;
+      });
+      const vals: number[] = [];
+      blk.words.forEach((ww) => {
+        for (let k = 0; k < spec.per; k++) vals.push(blk.d * (code(ww, k, spec.bits) - spec.z));
+      });
+      const max = Math.max(...vals.map(Math.abs)) || 1;
+      $("[data-nweights]").textContent = String(spec.weights);
+      $("[data-bars]").innerHTML = vals
+        .map((v, i) => {
+          const h = (Math.abs(v) / max) * 50;
+          const pos = v >= 0 ? `bottom:50%` : `top:50%`;
+          return `<i data-e="${i}" title="weight ${i}: ${fmt(v)}"><b style="${pos};height:${Math.max(h, 0.6).toFixed(2)}%"></b></i>`;
+        })
+        .join("");
+      $("[data-bits]").textContent = String(spec.bits);
+      $("[data-z]").textContent = String(spec.z);
+      show();
+    }
+
+    function show() {
+      const spec = SPEC[type];
+      const blk = data.blocks[type].blocks[bi];
+      const w = blk.words[word];
+      root!.querySelectorAll(".code").forEach((c) => c.classList.toggle("on", (c as HTMLElement).dataset.code === String(t)));
+      const e = word * spec.per + t;
+      root!.querySelectorAll("[data-bars] i").forEach((b) => b.classList.toggle("on", (b as HTMLElement).dataset.e === String(e)));
+      const n = code(w, t, spec.bits);
+      $("[data-t]").textContent = String(t);
+      $("[data-shift]").textContent = String(spec.bits * (t >> 1) + 16 * (t & 1));
+      $("[data-n]").textContent = String(n);
+      $("[data-val]").textContent = fmt(blk.d * (n - spec.z));
+    }
+
+    function step() {
+      t += 1;
+      if (t >= SPEC[type].per) {
+        t = 0;
+        word = (word + 1) % 8;
+        if (word === 0) bi = (bi + 1) % data.blocks[type].blocks.length;
+        render();
+      } else show();
+    }
+    function sync() {
+      clearInterval(timer);
+      if (visible && motion.running) timer = window.setInterval(step, 650);
+    }
+
+    root.querySelectorAll<HTMLButtonElement>("[data-type]").forEach((b) =>
+      b.addEventListener("click", () => {
+        type = b.dataset.type as Name;
+        root.querySelectorAll("[data-type]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+        bi = word = t = 0;
+        render();
+      }),
+    );
+    root.querySelectorAll<HTMLButtonElement>("[data-block]").forEach((b) =>
+      b.addEventListener("click", () => {
+        const n = data.blocks[type].blocks.length;
+        bi = (bi + Number(b.dataset.block) + n) % n;
+        word = t = 0;
+        render();
+      }),
+    );
+    root.addEventListener("pointerover", (e) => {
+      const c = (e.target as HTMLElement).closest<HTMLElement>(".code[data-code]");
+      if (c) {
+        t = Number(c.dataset.code);
+        show();
+      }
+    });
+    render();
+    onVisible(root, (v) => {
+      visible = v;
+      sync();
+    });
+    motion.on(sync);
+  }
+
+</script>

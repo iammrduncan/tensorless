@@ -1,0 +1,65 @@
+---
+title: "Start here"
+description: "What tensorless is, the one command it runs, what you need, and where each part of these docs takes you."
+type: hub
+tableOfContents: false
+---
+
+tensorless runs a model that was tuned for your GPU, on the engine it was tuned with, in one command. The first card is the NVIDIA Tesla P100 (16 GB), a server card that sells used for about $100. On it, tensorless runs a 27-billion-parameter model at 30 tokens a second.
+
+```sh
+curl -fsSL https://tensorless.dev/install.sh | sh
+tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF
+```
+
+The launcher checks your card, picks the recipe for that model on that card, and pulls the engine image and the model file. It checks both by hash, then starts an OpenAI-compatible server on `127.0.0.1:8080`. Every number on these pages was measured, and each one says how.
+
+## What you need
+
+- An x86-64 Linux machine (the engine image is linux/amd64) with an NVIDIA Tesla P100 16 GB, free for this model alone.
+- An x86-64 CPU with AVX2, FMA and F16C.
+- An NVIDIA driver from R525 to R580. R580 is the last branch that supports the P100.
+- podman or docker, with NVIDIA container support.
+- About 13 GB of disk space for the model, plus a few GB for the engine image.
+
+`tensorless doctor` checks the card, the driver, the container runtime, NVIDIA container support and disk space, and names the fix for anything missing. It does not check the CPU: `grep -o -w -E 'avx2|fma|f16c' /proc/cpuinfo | sort -u` should print all three.
+
+## Find your way
+
+The docs follow [Diátaxis](https://diataxis.fr/): each page has one job.
+
+<div class="tl-quadrants">
+  <a href="/docs/tutorials/first-model/">
+    <span class="tl-kicker">Tutorials</span>
+    <strong>Learn by doing</strong>
+    <span>Run your first model on a P100, then measure your card against the receipt.</span>
+  </a>
+  <a href="/docs/how-to/setup/install-launcher/">
+    <span class="tl-kicker">How-to guides</span>
+    <strong>Get one task done</strong>
+    <span>Install, prepare a host, run in the background, connect a client, benchmark, fix a failed start.</span>
+  </a>
+  <a href="/docs/reference/cli/">
+    <span class="tl-kicker">Reference</span>
+    <strong>Look it up</strong>
+    <span>Every command and flag, the recipe file, the engine image and its switches, the PN format, the receipts.</span>
+  </a>
+  <a href="/docs/explanation/how-tensorless-works/">
+    <span class="tl-kicker">Explanation</span>
+    <strong>Understand why</strong>
+    <span>How the pieces fit, why the P100, where the engine came from, and why you can trust its numbers.</span>
+  </a>
+</div>
+
+## What it runs today
+
+| Launch command | Decode on one P100 |
+|---|---:|
+| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | **30.03 tok/s** |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | 26.18 tok/s |
+
+Both were measured on the published engine image with `tensorless bench`: the median of 3 runs of 256 greedy tokens after a 429-token prompt. The [launch targets](reference/launch-targets.md) page has the details, and the [receipts](reference/receipts.md) have every measurement.
+
+## Get help
+
+Ask on [Discord](https://discord.gg/3Qs2uejUf9), or open an [issue on GitHub](https://github.com/iammrduncan/tensorless/issues). Results from your own P100 are welcome in both places.

@@ -1,0 +1,216 @@
+---
+// Where the card's 16 GB go, from real numbers: the weights by type (the model file, without the
+// MTP layer, which this recipe does not load), the KV cache and the DeltaNet state (computed from
+// the model's shape and the recipe's settings), and the GPU memory the receipt measured.
+import map from "../../data/model-map.json";
+
+const MiB = 2 ** 20;
+const d = map.dims;
+const ctx = 65536;
+const card = 16269; // MiB, as the P100 reported it (docs/receipts/engine-v0.1.0)
+const measured = { idle: 13997, generating: 14577 };
+
+// Weights by type, main model only (the next-token layer is skipped at load: TENSOR_SKIP).
+const byType: Record<string, number> = {};
+const add = (r: (string | number)[]) => (byType[r[3] as string] = (byType[r[3] as string] ?? 0) + (r[4] as number));
+map.layers.forEach((l) => l.kind !== "nextn" && l.t.forEach(add));
+map.globals.forEach(add);
+const weights = Object.values(byType).reduce((a, b) => a + b, 0);
+
+const attnLayers = map.layers.filter((l) => l.kind === "attention").length;
+const dnLayers = map.layers.filter((l) => l.kind === "deltanet").length;
+// KV: K and V, kv_heads × head_dim values per position, q4_0 = 18 bytes per 32 values.
+const kvPerPos = 2 * d.kv_heads * d.head_dim * (18 / 32);
+const kv = attnLayers * kvPerPos * ctx;
+// DeltaNet: a (heads × v_dim × k_dim) f32 state, plus (kernel − 1) × conv channels of f32 conv state.
+const vDim = d.ssm_inner / d.ssm_heads;
+const convCh = d.ssm_inner + 2 * d.ssm_groups * d.ssm_state;
+const statePer = (d.ssm_heads * vDim * d.ssm_state + (d.conv_kernel - 1) * convCh) * 4;
+const state = dnLayers * statePer;
+const rest = measured.generating * MiB - weights - kv - state;
+
+const order = ["pn3t", "pn4t", "Q4_K", "Q3_K", "Q6_K", "Q8_0", "F32"];
+const varOf: Record<string, string> = { pn3t: "--t-pn3t", pn4t: "--t-pn4t", Q3_K: "--t-k", Q4_K: "--t-k2", Q6_K: "--t-k3", Q8_0: "--t-q8", F32: "--t-f32" };
+const segs = [
+  ...order.filter((t) => byType[t]).map((t) => ({ key: t, bytes: byType[t], color: `var(${varOf[t]})`, label: t })),
+  { key: "kv", bytes: kv, color: "var(--blue)", label: "KV cache" },
+  { key: "state", bytes: state, color: "var(--ink-2)", label: "DeltaNet state" },
+  { key: "rest", bytes: rest, color: "var(--dim)", label: "everything else" },
+];
+const GiB = 2 ** 30;
+const pct = (b: number) => `${((b / MiB / card) * 100).toFixed(3)}%`;
+const gib = (b: number) => (b / GiB).toFixed(2);
+const gibM = (m: number) => (m / 1024).toFixed(2); // from MiB, as nvidia-smi reports
+---
+
+<section class="section" id="memory" aria-labelledby="mem-title">
+  <div class="wrap">
+    <p class="label" data-reveal>Where the 16 GB go</p>
+    <h2 id="mem-title" class="h2" data-reveal>A 27B model and a 65,536-token context, on one card.</h2>
+    <p class="lede" data-reveal>
+      Only {attnLayers} of the {attnLayers + dnLayers} layers keep a KV cache, the memory of earlier tokens that grows with the
+      context. The other {dnLayers} are Gated DeltaNet layers: each keeps a small fixed-size state instead, the same at the first
+      token and the 65,536th. That is how the whole context fits next to the weights.
+    </p>
+
+    <div class="mem panel" data-mem data-reveal>
+      <div class="bar" role="img" aria-label={`GPU memory: weights ${gib(weights)} GiB, KV cache ${gib(kv)} GiB, DeltaNet state ${gib(state)} GiB, everything else ${gib(rest)} GiB; ${gibM(measured.generating)} of ${gibM(card)} GiB in use while generating.`}>
+        {segs.map((s, i) => <span class="seg" style={`--w:${pct(s.bytes)};--c:${s.color};--i:${i}`} title={`${s.label}: ${gib(s.bytes)} GiB`} />)}
+        <span class="tick" style={`left:${((measured.idle / card) * 100).toFixed(2)}%`}><b class="mono">idle {gibM(measured.idle)} GiB</b></span>
+        <span class="tick gen" style={`left:${((measured.generating / card) * 100).toFixed(2)}%`}><b class="mono">generating {gibM(measured.generating)} GiB</b></span>
+      </div>
+      <div class="scale mono small"><span>0</span><span>{gibM(card)} GiB, the whole card</span></div>
+
+      <div class="rows">
+        <div class="row">
+          <p class="k">Weights</p>
+          <p class="v mono">{gib(weights)} GiB</p>
+          <p class="t">
+            The main model's tensors, as stored in the file:{" "}
+            {order.filter((t) => byType[t]).map((t) => <span class="ty"><i class="sw" style={`background:var(${varOf[t]})`}></i>{t} {gib(byType[t])} GiB</span>)}
+          </p>
+        </div>
+        <div class="row">
+          <p class="k">KV cache</p>
+          <p class="v mono">{gib(kv)} GiB</p>
+          <p class="t">
+            {attnLayers} attention layers × 65,536 positions × K and V, {d.kv_heads} heads of {d.head_dim}, at q4_0, reserved up front.
+          </p>
+        </div>
+        <div class="row">
+          <p class="k">DeltaNet state</p>
+          <p class="v mono">{gib(state)} GiB</p>
+          <p class="t">{dnLayers} layers, each {d.ssm_heads} heads × a {vDim} × {d.ssm_state} matrix in f32, plus a short convolution state: the same size at any context length.</p>
+        </div>
+        <div class="row">
+          <p class="k">Everything else</p>
+          <p class="v mono">{gib(rest)} GiB</p>
+          <p class="t">The CUDA context and compute buffers: what the measured total leaves after the three above.</p>
+        </div>
+      </div>
+      <p class="note small">
+        Weights are summed from the file's header. The KV cache and the state are computed from the model's shape and the recipe's
+        settings. The totals, {gibM(measured.idle)} GiB idle and {gibM(measured.generating)} GiB generating, were measured on the P100 that
+        ran the release's receipt. The MTP layer in the file is not loaded by this recipe.
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .mem {
+    margin-top: 2rem;
+    padding: clamp(1.1rem, 3vw, 1.8rem);
+  }
+  .bar {
+    position: relative;
+    display: flex;
+    height: 44px;
+    margin-top: 2.2rem;
+    border-radius: 8px;
+    background: repeating-linear-gradient(135deg, var(--panel-2) 0 6px, var(--panel) 6px 12px);
+    border: 1px solid var(--rule);
+  }
+  .seg {
+    width: 0;
+    background: var(--c);
+    transition: width 0.9s cubic-bezier(0.2, 0.7, 0.2, 1);
+    transition-delay: calc(var(--i) * 0.12s);
+  }
+  .seg:first-child {
+    border-radius: 7px 0 0 7px;
+  }
+  [data-mem].is-on .seg,
+  :global(html:not(.js)) .seg {
+    width: var(--w);
+  }
+  .tick {
+    position: absolute;
+    top: -10px;
+    bottom: -6px;
+    width: 0;
+    border-left: 1.5px dashed var(--ink);
+  }
+  .tick b {
+    position: absolute;
+    bottom: calc(100% + 2px);
+    transform: translateX(-100%);
+    padding-right: 4px;
+    font-size: 0.68rem;
+    font-weight: 500;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .tick:not(.gen) b {
+    bottom: calc(100% + 16px);
+  }
+  .tick.gen b {
+    color: var(--ink);
+  }
+  .scale {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.4rem;
+    font-size: 0.7rem;
+  }
+  .rows {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.2rem 2rem;
+    margin-top: 1.6rem;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 1rem;
+    align-items: baseline;
+    padding-top: 1rem;
+    border-top: 1px solid var(--rule);
+  }
+  .k {
+    margin: 0;
+    font-weight: 600;
+  }
+  .v {
+    margin: 0;
+    justify-self: end;
+    font-size: 0.9rem;
+  }
+  .t {
+    grid-column: 1 / -1;
+    margin: 0.35rem 0 0;
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .ty {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-right: 0.7rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+  .note {
+    margin: 1.4rem 0 0;
+    font-size: 0.8rem;
+  }
+  @media (max-width: 720px) {
+    .rows {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<script>
+  import { onVisible } from "../../scripts/motion";
+  const el = document.querySelector("[data-mem]");
+  if (el) {
+    const io = onVisible(el, (v) => {
+      if (v) {
+        el.classList.add("is-on");
+        io.disconnect();
+      }
+    }, "0px 0px -10% 0px");
+  }
+</script>

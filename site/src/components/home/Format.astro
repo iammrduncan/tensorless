@@ -1,0 +1,197 @@
+---
+// How a 27B model fits in 12 GiB, in plain words, with real data: the first weights of a real
+// pn3t block (read from the model file), the real sizes, and the rotation, shown working: the
+// file's real signs and the real normalized Walsh–Hadamard transform, on an example input with an
+// outlier. The byte-level view sits behind "Show the bits".
+import map from "../../data/model-map.json";
+import PNBits from "./PNBits.astro";
+import Squeeze from "./Squeeze.astro";
+import Turn from "./Turn.astro";
+
+const GiB = 2 ** 30;
+// Parameters: every tensor of the main model (the MTP layer is not loaded).
+let params = 0;
+let pnBytes = 0;
+for (const l of map.layers) if (l.kind !== "nextn") for (const t of l.t) {
+  params += (t[1] as number) * (t[2] as number);
+  pnBytes += t[4] as number;
+}
+for (const g of map.globals) {
+  params += (g[1] as number) * (g[2] as number);
+  pnBytes += g[4] as number;
+}
+const fp16 = (params * 2) / GiB;
+const pn = pnBytes / GiB;
+const card = 16269 / 1024; // GiB, as the P100 reported it
+---
+
+<section class="section" id="pn" aria-labelledby="fmt-title">
+  <div class="wrap">
+    <p class="label" data-reveal>The PN format</p>
+    <h2 id="fmt-title" class="h2" data-reveal>How 27 billion numbers fit on a 16 GB card.</h2>
+    <p class="lede" data-reveal>
+      A model is billions of numbers, its weights. Stored the usual way, at 16 bits each, Qwen3.8-27B needs{" "}
+      <b>{fp16.toFixed(1)} GiB</b>, three times what the P100 holds. PN stores most of them in 3 bits, in a layout made for this
+      card, and the model the engine loads comes to <b>{pn.toFixed(2)} GiB</b>.
+    </p>
+
+    <div class="sizes" data-reveal data-sizes>
+      <div class="sz">
+        <span class="n">16-bit</span>
+        <span class="bar"><i style={`--w:${((fp16 / fp16) * 100).toFixed(1)}%`} class="fp"></i></span>
+        <span class="v mono">{fp16.toFixed(1)} GiB</span>
+      </div>
+      <div class="sz">
+        <span class="n">PN3</span>
+        <span class="bar"><i style={`--w:${((pn / fp16) * 100).toFixed(1)}%`} class="pn"></i></span>
+        <span class="v mono">{pn.toFixed(2)} GiB</span>
+      </div>
+      <div class="sz cardline" style={`--at:${((card / fp16) * 100).toFixed(1)}%`}>
+        <span class="n">the card</span>
+        <span class="bar"><b></b></span>
+        <span class="v mono">{card.toFixed(1)} GiB</span>
+      </div>
+    </div>
+
+    <div class="story panel" data-reveal>
+      <div class="story-text">
+        <p class="k">1 · Groups of 80, one ruler each</p>
+        <h3>Every weight lands on one of 8 marks.</h3>
+        <p class="small">
+          These are the first 80 weights of layer 0's <code>ffn_gate</code>, read straight from the file. All 80 share one scale,
+          so each weight only has to say which of 8 marks it sits on: 3 bits. The scale and the 80 codes fill exactly 34 bytes.
+        </p>
+      </div>
+      <Squeeze />
+    </div>
+
+    <div class="story panel" data-reveal>
+      <div class="story-text">
+        <p class="k">2 · Turn the input first</p>
+        <h3>One huge value would wreck the ruler. So we spread it out.</h3>
+        <p class="small">
+          A ruler wide enough for an outlier rounds everything else to zero. So before the P100 reads PN weights, the engine
+          flips some signs (the file lists which) and mixes pairs of values, round after round, until the outlier is shared by
+          all of them. The weights were stored already turned, so the answer comes out the same. Shown with 16 values, the
+          file's first 16 signs and the real transform; the engine's has 256 values and 8 rounds, 4 times in every layer.
+        </p>
+      </div>
+      <Turn />
+    </div>
+
+    <details class="bits panel" data-reveal>
+      <summary>Show the bits <span class="small">· the 34 bytes of a block, decoded code by code</span></summary>
+      <PNBits />
+    </details>
+  </div>
+</section>
+
+<style>
+  .lede b {
+    color: var(--ink);
+  }
+  .sizes {
+    display: grid;
+    gap: 0.5rem;
+    max-width: 46rem;
+    margin-top: 2rem;
+  }
+  .sz {
+    display: grid;
+    grid-template-columns: 5.5rem 1fr 6rem;
+    align-items: center;
+    gap: 0.8rem;
+    font-size: 0.9rem;
+  }
+  .sz .v {
+    text-align: right;
+  }
+  .sz .bar {
+    position: relative;
+    height: 22px;
+    border-radius: 5px;
+    background: var(--panel-2);
+    overflow: hidden;
+  }
+  .sz .bar i {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 0;
+    border-radius: 5px;
+    transition: width 1.1s cubic-bezier(0.2, 0.7, 0.2, 1);
+  }
+  [data-sizes].is-in .bar i,
+  :global(html:not(.js)) .sz .bar i {
+    width: var(--w);
+  }
+  .fp {
+    background: var(--dim);
+  }
+  .pn {
+    background: var(--t-pn3t);
+  }
+  .cardline .bar {
+    background: transparent;
+    overflow: visible;
+  }
+  .cardline .bar b {
+    position: absolute;
+    left: 0;
+    width: var(--at);
+    top: 50%;
+    border-top: 2px dashed var(--ink);
+  }
+  .story {
+    margin-top: 1.2rem;
+    padding: clamp(1.1rem, 3vw, 2rem);
+    box-shadow: none;
+    background: radial-gradient(120% 80% at 80% 0%, rgba(125, 141, 255, 0.06), transparent 60%), var(--panel);
+  }
+  .story:first-of-type {
+    margin-top: 2.5rem;
+  }
+  .story-text {
+    max-width: 46rem;
+    margin-bottom: 1.4rem;
+  }
+  .k {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  h3 {
+    margin: 0.3rem 0 0;
+    font-size: 1.2rem;
+    letter-spacing: -0.015em;
+  }
+  .story p.small {
+    margin: 0.55rem 0 0;
+  }
+
+
+
+
+
+
+  .bits {
+    margin-top: 1rem;
+    padding: 0;
+    box-shadow: none;
+  }
+  .bits summary {
+    padding: 1rem 1.3rem;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .bits[open] summary {
+    border-bottom: 1px solid var(--rule);
+  }
+</style>
+
+<script>
+  import { onVisible } from "../../scripts/motion";
+
+  // The size bars grow when seen.
+  const sizes = document.querySelector("[data-sizes]");
+  if (sizes) onVisible(sizes, (v) => v && sizes.classList.add("is-in"));
+</script>

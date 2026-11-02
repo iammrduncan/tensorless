@@ -1,0 +1,76 @@
+---
+// The docs' site title: the tensorless mark and wordmark, as on the home page, and the launcher
+// version these pages describe (src/release.mjs).
+import Logo from "../assets/logo.svg?raw";
+
+declare const __TENSORLESS_VERSION__: string;
+const version = __TENSORLESS_VERSION__;
+---
+
+<div class="title">
+  <a class="brand" href="/" aria-label="tensorless home">
+    <span class="mark" set:html={Logo} />
+    <span class="word" translate="no">tensorless</span>
+  </a>
+  <a
+    class="version"
+    href="https://github.com/iammrduncan/tensorless/releases"
+    title={`These pages describe tensorless ${version}.`}
+    translate="no">v{version}</a
+  >
+</div>
+
+<style>
+  .title {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    min-width: 0;
+  }
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.55rem;
+    text-decoration: none;
+    color: var(--sl-color-white);
+  }
+  .mark {
+    display: inline-flex;
+  }
+  .mark :global(svg) {
+    width: 32px;
+    height: 32px;
+  }
+  .mark :global(.flake) {
+    transition: transform 0.35s ease;
+  }
+  .brand:hover .mark :global(.flake) {
+    transform: translate(1.5px, -1.5px);
+  }
+  .word {
+    font-size: var(--sl-text-h4);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+  }
+  .less {
+    color: var(--sl-color-gray-3);
+  }
+  .version {
+    flex-shrink: 0;
+    padding: 0.1rem 0.5rem;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 999px;
+    color: var(--sl-color-gray-2);
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-xs);
+    font-weight: 500;
+    line-height: 1.4;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .version:hover,
+  .version:focus-visible {
+    border-color: var(--sl-color-accent);
+    color: var(--sl-color-text-accent);
+  }
+</style>
