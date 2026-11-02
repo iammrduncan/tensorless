@@ -1,6 +1,6 @@
 # tensorless: design
 
-Status: agreed direction, 2026-11-02. Nothing here is built yet; this is the plan the first releases follow.
+Status: agreed direction, 2026-11-02. The first release is engine-v0.1.0 with launcher v0.1.0.
 
 ## The goal
 
@@ -43,8 +43,8 @@ A second engine lineage would be justified only by a different runtime, or by a 
 
 | Term | Meaning |
 |---|---|
-| **Engine release** | A tagged engine version, `engine-vYYYY.MM.N`. It is the exact source in `engine/` at that tag, plus its build configuration. |
-| **Image** | One build of a release for one GPU architecture, published as `ghcr.io/iammrduncan/tensorless-engine:<release>-<arch>`. Recipes refer to it by digest, never by tag. |
+| **Engine release** | A tagged engine version, `engine-vX.Y.Z` (semver; the first is `engine-v0.1.0`). It is the exact source in `engine/` at that tag, plus its build configuration. The launcher is versioned separately, `vX.Y.Z`. |
+| **Image** | One build of a release for one GPU architecture, published as `ghcr.io/iammrduncan/tensorless-engine:<X.Y.Z>-<arch>` (e.g. `0.1.0-sm60`). Recipes refer to it by digest, never by tag. |
 | **Recipe** | One model on one card: the image digest, the model's Hugging Face repository, revision, file and sha256, the engine switches and server flags, the hardware requirements, and the measured numbers. `recipes/<model>/<card>.toml`. |
 | **Receipt** | The measurements the release gate took for a recipe: decode and prefill speed at stated contexts, quality checks, the image digest and model hash they were taken on. `docs/receipts/<release>/`. |
 | **Champion** | A change that won a hill-climb campaign: it was faster than the campaign's best so far, under that campaign's guards. |
@@ -56,12 +56,12 @@ LICENSE                 Apache-2.0
 NOTICE                  attribution, including the MIT-licensed upstreams
 LICENSES/               upstream license texts (llama.cpp, llamAmpere, ...)
 THIRD_PARTY_NOTICES.md
-engine/                 the engine source (a llama.cpp fork), exported per release
+engine/                 the engine source (a llama.cpp fork), exported per release; PROVENANCE.md says from where
 containers/             one Containerfile per architecture: engine.sm60.Containerfile, ...
-recipes/                <model>/<card>.toml, plus the schema
-launcher/               the tensorless CLI (Go)
-docs/                   design, recipe docs, receipts, release notes
-.github/workflows/      build images on a release tag; launcher builds and tests
+recipes/                <model>/<card>.toml, plus the schema; embedded into the launcher at build time
+go.mod, cmd/, internal/ the tensorless CLI (Go); recipes_embed.go embeds recipes/
+docs/                   design, the PN format, the launcher, receipts
+.github/workflows/      engine-image.yml (images on engine-v* tags), launcher.yml (tests; archives on v* tags)
 ```
 
 ## The launcher
@@ -141,13 +141,17 @@ Hill-climb campaigns run in the research repository with an automated harness. E
    - speed no worse than any merged champion, within measured noise;
    - decode at the long contexts (32K and 65K on the P100) and prefill;
    - the model's quality checks, once per release.
-4. **If the gate passes:** tag `engine-vYYYY.MM.N`, publish the measured digest, write the receipts, and move the recipes in one pull request.
+4. **If the gate passes:** tag `engine-vX.Y.Z`, publish the measured digest, write the receipts, and move the recipes in one pull request.
 5. **If a change helps one model and fails another's check,** the failing model's recipe stays on the previous release, and the conflict is recorded in the release notes.
 
-The engine source arrives here as one snapshot commit per release, exported from the research repository. The export:
-- drops research-only files, such as autoresearch state, agent prompts and lab paths;
-- scans for private hostnames, paths and credentials;
-- writes `engine/PROVENANCE.md`: the upstream base, the research commit, and the champions the release contains.
+The engine source arrives here as one snapshot commit per release, exported from the research repository by its export tool. The export:
+- takes `engine/` at a commit with `git archive`, so nothing uncommitted can leak in;
+- drops the research-only files: autoresearch state, the research lane's switch file, a status note and a commit map;
+- rewrites, one line for one line, the few comments that point into the private repository. Line numbers and the compiled code do not change;
+- refuses to finish if a scan finds a lab-only term (hostnames, network names, private repository names, credentials) in any file, or a home path or personal name in any file that differs from the public upstream base;
+- writes `engine/PROVENANCE.md`: the upstream base, the research commit, the tree digest, what was removed and rewritten, and known issues.
+
+The image build is CI's: `.github/workflows/engine-image.yml` builds `containers/engine.<arch>.Containerfile` on an `engine-v*` tag (or by hand, for release candidates) and prints the digest to pin.
 
 ## Licensing
 

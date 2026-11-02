@@ -1,0 +1,61 @@
+name: launcher
+
+# Checks the launcher on every change, and on a tag vX.Y.Z publishes release archives with
+# sha256 companions for linux-x86_64, linux-aarch64 and macos-arm64.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths-ignore: ["engine/**", "containers/**"]
+  pull_request:
+    paths-ignore: ["engine/**", "containers/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l cmd internal *.go)" || { gofmt -l cmd internal *.go; exit 1; }
+      - run: go vet ./...
+      - run: go test ./...
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build archives
+        run: |
+          set -eu
+          v="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          for t in linux/amd64:linux-x86_64 linux/arm64:linux-aarch64 darwin/arm64:macos-arm64; do
+            goos="${t%%/*}"; rest="${t#*/}"; goarch="${rest%%:*}"; name="${t#*:}"
+            d="tensorless-$v-$name"
+            mkdir -p "dist/$d"
+            CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath \
+              -ldflags "-s -w -X main.version=$v -X main.commit=$GITHUB_SHA" \
+              -o "dist/$d/tensorless" ./cmd/tensorless
+            cp LICENSE NOTICE THIRD_PARTY_NOTICES.md README.md "dist/$d/"
+            cp -r LICENSES "dist/$d/"
+            tar -C dist -czf "dist/$d.tar.gz" "$d"
+            (cd dist && sha256sum "$d.tar.gz" > "$d.tar.gz.sha256")
+          done
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --title "tensorless $GITHUB_REF_NAME" --generate-notes

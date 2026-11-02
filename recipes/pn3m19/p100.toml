@@ -1,0 +1,80 @@
+# PN3M19 on one Tesla P100 16 GB.
+# [run] is the configuration the decode hill climb's judge measured: its llama-server flags and
+# its engine switches, unchanged. The hf_repo, revision, size and image digest are filled in when
+# the model upload and the engine-v0.1.0 image exist; until then this recipe is a draft.
+schema = 1
+status = "draft"
+
+[model]
+name       = "pn3m19"
+title      = "Qwen3.8-27B PN3M19 (P100-native 3-bit, mix P0k+19)"
+hf_repo    = "iammrduncan/Qwen3.8-27B-PN3M19-GGUF"
+revision   = "0000000000000000000000000000000000000000"
+file       = "Qwen3.8-27B-PN3-P0k19.gguf"
+sha256     = "15ce2d4469673f1f1753c55de3780cfe04311dd6f05cb41633d73df128e91476"
+size_bytes = 0
+license    = "to be confirmed with the upload"
+
+[card]
+id                 = "p100"
+title              = "NVIDIA Tesla P100 16 GB"
+compute_capability = "6.0"
+min_memory_mib     = 16000
+min_driver         = "525.60.13"
+
+[engine]
+release = "engine-v0.1.0"
+arch    = "sm60"
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[run]
+alias       = "pn3m19"
+context     = 65536
+threads_max = 8
+args = [
+  "-np", "1",
+  "-ngl", "99",
+  "-ot", "token_embd.weight=CUDA0",
+  "-ctk", "q4_0", "-ctv", "q4_0",
+  "-sm", "none",
+  "-lm", "none",
+  "-fit", "off",
+  "--threads-http", "4",
+  "-b", "512", "-ub", "512",
+  "-fa", "on",
+  "--jinja",
+]
+
+[run.env]
+GGML_CUDA_FATTN_SM60            = "1"
+GGML_CUDA_MMV_SM60              = "1"
+GGML_CUDA_FUSE_PRE_ADD          = "1"
+GGML_CUDA_MMV_SM60_XXS_STOCK    = "1"
+GGML_CUDA_SM86_IQ3_SMEM_GRID    = "1"
+GGML_CUDA_MMV_SM60_IQ3S_STOCK   = "1"
+GGML_CUDA_FATTN_SM60_CTAS       = "4"
+GGML_CUDA_MMV_SM60_XXS_KB_WIDE  = "1"
+GGML_CUDA_MMV_SM60_INPLACE_XXS  = "1"
+GGML_CUDA_MMV_SM60_INPLACE_IQ3S = "1"
+GGML_CUDA_MMV_SM60_Q4K_HEAD     = "1"
+GGML_CUDA_MMV_SM60_Q3K          = "1"
+GGML_CUDA_MMV_SM60_Q4K_DHEAD    = "1"
+GGML_CUDA_MMV_SM60_Q6K          = "1"
+GGML_CUDA_NORM_EMIT_Q8          = "1"
+GGML_CUDA_PREFILL_DEQ_F4        = "1"
+GGML_CUDA_PREFILL_REP_DIRECT    = "1"
+GGML_CUDA_PREFILL_CHUNK_GEMM    = "1"
+GGML_CUDA_PREFILL_CHUNK_STREAMS = "3"
+GGML_CUDA_SM86_GDN_COLS         = "8"
+GGML_CUDA_FATTN_TILE_OCC1       = "1"
+
+[receipt]
+source  = "Research measurements by the hill climb's judge on a source build of the same engine commit, one P100. The engine-v0.1.0 release gate re-measures the published image."
+summary = "Decode about 30 tok/s at short context, 1.14x the Q3 baseline model on the same card. Not yet measured at 32K or 65K."
+decode_tps  = { short = 30.06 }
+prefill_tps = { ctx_4k = 121.4 }
+notes = [
+  "short: 256 greedy tokens after a cold prompt of about 600 tokens (code prompt; prose read 30.18).",
+  "ctx_4k: a cold prompt of about 4,100 tokens, code (prose read 119.6).",
+  "--jinja is not part of the measured configuration; it only applies the chat template for /v1/chat/completions.",
+]
