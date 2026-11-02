@@ -1,0 +1,25 @@
+tensorless
+Copyright 2026 tensorless contributors
+https://github.com/iammrduncan/tensorless
+
+tensorless is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+The inference engine in engine/ is derived from MIT-licensed projects. Their
+copyright and permission notices are kept in LICENSES/ and in the source files
+that carry them:
+
+- llama.cpp, Copyright (c) 2023-2026 The ggml authors
+  https://github.com/ggml-org/llama.cpp (LICENSES/llama.cpp-MIT.txt)
+- llama-cpp-turboquant by TheTom, a fork of llama.cpp under the same license
+  and notice: https://github.com/TheTom/llama-cpp-turboquant
+- llamAmpere by JakeATX, a fork of llama-cpp-turboquant under the same license
+  and notice: https://github.com/JakeATX/llamAmpere
+- exllamav3, Copyright (c) 2025 Turboderp, portions used for the EXL3 weight
+  types: https://github.com/turboderp-org/exllamav3 (LICENSES/exllamav3-MIT.txt)
+- nlohmann/json, Copyright (c) 2013-2025 Niels Lohmann
+  https://github.com/nlohmann/json (LICENSES/nlohmann-json-MIT.txt)
+
+Changes made for tensorless are licensed under the Apache License, Version 2.0.
+
+Model weights are not part of tensorless. Each model keeps its own license,
+which its recipe names.
