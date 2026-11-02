@@ -50,6 +50,7 @@ export default defineConfig({
         // Dark only, like the home page.
         ThemeProvider: "./src/components/starlight/ThemeProvider.astro",
         ThemeSelect: "./src/components/starlight/ThemeSelect.astro",
+        SocialIcons: "./src/components/starlight/SocialIcons.astro",
       },
       social: [
         { icon: "github", label: "GitHub", href: repo },

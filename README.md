@@ -2,6 +2,10 @@
 
 # tensorless
 
+<p align="center"><a href="https://huggingface.co/collections/iamMrDuncan/tensorless"><img src="https://huggingface.co/datasets/huggingface/badges/resolve/main/model-on-hf-md-dark.svg" alt="Models on Hugging Face" height="28"></a></p>
+
+**The models are on [Hugging Face](https://huggingface.co/collections/iamMrDuncan/tensorless)**: every launch target, in one collection.
+
 **Join us on [Discord](https://discord.gg/3Qs2uejUf9)**: questions, results from your own P100, and ideas.
 
 **[Credits](CREDITS.md)**: the projects, papers, models, datasets and people tensorless is built on.
