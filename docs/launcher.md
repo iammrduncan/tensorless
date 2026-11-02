@@ -8,7 +8,7 @@ tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF
 
 It detects the card, picks the model's recipe for that card, pulls the engine image by digest, downloads the model at its pinned revision into the Hugging Face cache and checks its sha256, then starts an OpenAI-compatible `llama-server` in a podman or docker container. The launcher holds no inference code. How the launcher, recipes and images fit together is in [design.md](design.md).
 
-**Status:** the built-in recipes are drafts, so `pull`, `run` and `serve` need `--allow-draft`. A recipe that still has placeholder values is refused even with it; `tensorless models` marks those "unpublished". `info`, `models`, `capabilities`, `doctor` and `--dry-run` work for every recipe.
+**Status:** v0.1.0. Both built-in recipes are released: `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` and `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` need no extra flags. A draft recipe needs `--allow-draft`, and a recipe that still has placeholder values is refused even with it; `tensorless models` marks those "unpublished".
 
 ## Install
 

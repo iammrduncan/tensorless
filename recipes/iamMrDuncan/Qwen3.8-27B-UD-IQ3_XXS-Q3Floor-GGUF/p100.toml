@@ -7,7 +7,7 @@
 # every PN measurement.
 # [run] is the configuration the decode hill climb's judge decoded it with, on this engine, in every block.
 schema = 1
-status = "draft"
+status = "released"
 
 [model]
 name       = "q3floor"           # optional short alias; the repo id is the model's name
@@ -29,7 +29,7 @@ min_driver         = "525.60.13"
 [engine]
 release = "engine-v0.1.0"
 arch    = "sm60"
-image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7"   # 0.1.0-rc1
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7"   # 0.1.0-sm60 (measured as 0.1.0-rc1-sm60)
 
 [run]
 alias       = "iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF"
@@ -73,7 +73,7 @@ GGML_CUDA_SM86_GDN_COLS         = "8"
 GGML_CUDA_FATTN_TILE_OCC1       = "1"
 
 [receipt]
-source  = "Research measurements by the hill climb's judge on a source build of the same engine commit, one P100. The engine-v0.1.0 release gate re-measures the published image."
+source  = "decode_tps: the research hill climb's judge, on a source build (short context: this engine commit; 32K/65K: the climb's starting commit). The published image, measured on a P100 with tensorless bench: 26.18 tok/s median decode (docs/receipts/engine-v0.1.0/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF-p100.md)."
 summary = "Decode about 26.3 tok/s at short context and 24.5 / 22.9 tok/s at 32K / 65K. No speculative decoding in this recipe."
 decode_tps = { short = 26.26, ctx_32k = 24.52, ctx_65k = 22.92 }
 notes = [

@@ -1,6 +1,6 @@
 # tensorless: design
 
-Status: agreed direction, 2026-11-02. The first release is engine-v0.1.0 with launcher v0.1.0.
+Status: v0.1.0 released, 2026-11-02 (engine-v0.1.0, image 0.1.0-sm60, launcher v0.1.0).
 
 ## The goal
 
