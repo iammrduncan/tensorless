@@ -7,6 +7,7 @@ import mermaid from "astro-mermaid";
 import starlightLinksValidator from "starlight-links-validator";
 import starlightLlmsTxt from "starlight-llms-txt";
 import { remarkRelativeLinks } from "./src/plugins/remark-relative-links.mjs";
+import { fathom } from "./src/analytics.mjs";
 import { release } from "./src/release.mjs";
 
 const site = "https://tensorless.dev";
@@ -41,6 +42,8 @@ export default defineConfig({
         { tag: "meta", attrs: { property: "og:image", content: `${site}/og.png` } },
         { tag: "meta", attrs: { name: "twitter:image", content: `${site}/og.png` } },
         { tag: "meta", attrs: { name: "twitter:card", content: "summary_large_image" } },
+        // Fathom Analytics (src/analytics.mjs).
+        { tag: "script", attrs: fathom },
       ],
       components: {
         SiteTitle: "./src/components/SiteTitle.astro",

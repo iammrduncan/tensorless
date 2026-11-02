@@ -20,6 +20,7 @@ npm run check    # what the build cannot check; run it after a docs change
 - **The social image** is `public/og.png`, a 1200 × 630 screenshot of the home page's hero. **The README banner** is `../docs/assets/banner.png`: Bitsy and the name, over a render of the hero's tower.
 - **The logo** is Bitsy, `src/assets/logo.svg`. `public/favicon.svg` holds two versions: a hand-placed 16 × 16 pixel Bitsy for browser tabs (24 px and below) and the smooth one above.
 - **Response headers** for Cloudflare Pages, including the Content Security Policy, are in `public/_headers`. A page that loads anything from another host needs that host added there.
+- **Analytics** are [Fathom](https://usefathom.com/): `src/analytics.mjs` holds the script's settings, and both the home page and the docs load it. It counts only `tensorless.dev`, not `pages.dev` deployments or local previews.
 
 ## Writing docs
 
