@@ -8,9 +8,9 @@ tensorless runs a model that was tuned for your GPU, on the engine it was tuned 
 tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF
 ```
 
-The first target is the NVIDIA Tesla P100 (16 GB, sm_60), running PN3M19: a 3-bit quantization of Qwen3.8-27B made for this card, served by a llama.cpp-based engine with kernels written for Pascal.
+The first target is the NVIDIA Tesla P100 (16 GB, sm_60), running Qwen3.8-27B-PN3: a 3-bit quantization of Qwen3.8-27B made for this card, served by a llama.cpp-based engine with kernels written for Pascal.
 
-**Status: release candidate.** The engine image `0.1.0-rc1` and the PN3M19 model are published; v0.1.0 is released once the image has been measured on a real P100. Until then the recipes are drafts, so add `--allow-draft`. How the pieces fit together, and how engine releases are made, is in [docs/design.md](docs/design.md).
+**Status: release candidate.** The engine image `0.1.0-rc1` and the Qwen3.8-27B-PN3 model are published; v0.1.0 is released once the image has been measured on a real P100. Until then the recipes are drafts, so add `--allow-draft`. How the pieces fit together, and how engine releases are made, is in [docs/design.md](docs/design.md).
 
 ## Launch targets
 
@@ -18,8 +18,8 @@ Every model tensorless can launch today. Each row is a recipe: the exact engine 
 
 | Launch command | Model | Card | Engine | Decode, short context | Decode, 32K / 65K | Status |
 |---|---|---|---|---:|---:|---|
-| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | **PN3M19**: Qwen3.8-27B in our own P100-native 3-bit weight format ([PN](docs/pn-format.md)), 12.1 GiB | Tesla P100 16 GB | engine-v0.1.0 | **30.1 tok/s** | not yet measured | draft: model and image published, first P100 run pending |
-| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | **UD-IQ3_XXS Q3Floor**: Unsloth's Qwen3.8-27B UD-IQ3_XXS with its 91 sub-3-bit tensors re-quantized to IQ3_XXS, a 3-bit floor (standard llama.cpp types; the model the P100 kernels were first tuned on), 11.0 GiB | Tesla P100 16 GB | engine-v0.1.0 | 26.3 tok/s | 24.5 / 22.9 tok/s, on the climb's starting commit | draft: model upload pending, image built (0.1.0-rc1) |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | **Qwen3.8-27B-PN3**: Qwen3.8-27B in our own P100-native 3-bit weight format ([PN](docs/pn-format.md)), 12.1 GiB | Tesla P100 16 GB | engine-v0.1.0 | **30.1 tok/s** | not yet measured | draft: model and image published, first P100 run pending |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | **Qwen3.8-27B-UD-IQ3_XXS-Q3Floor**: Unsloth's Qwen3.8-27B UD-IQ3_XXS with its 91 sub-3-bit tensors re-quantized to IQ3_XXS, a 3-bit floor (standard llama.cpp types; the model the P100 kernels were first tuned on), 11.0 GiB | Tesla P100 16 GB | engine-v0.1.0 | 26.3 tok/s | 24.5 / 22.9 tok/s, on the climb's starting commit | draft: model upload pending, image built (0.1.0-rc1) |
 
 Decode is greedy single-stream generation: "short context" is 256 tokens after a prompt of about 600 tokens, and 32K/65K is 1,024 tokens after a prompt that fills the context. The numbers come from the research hill climb's judge, measured on one P100 with a source build of the engine commit. They are re-measured on the published image before a recipe is marked released. The receipts are in [docs/receipts/](docs/receipts/), and `tensorless models` lists the recipes your launcher knows.
 

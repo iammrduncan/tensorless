@@ -11,7 +11,7 @@ tags:
   - p100
 ---
 
-# Qwen3.8-27B UD-IQ3_XXS Q3Floor (GGUF)
+# Qwen3.8-27B-UD-IQ3_XXS-Q3Floor (GGUF)
 
 [Unsloth](https://huggingface.co/unsloth)'s `UD-IQ3_XXS` quantization of [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B) with a **3-bit floor**: every weight tensor is at 3 bits or more. Unsloth's file stores 91 tensors below 3 bits. This one raises them to IQ3_XXS and changes nothing else.
 

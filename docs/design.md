@@ -10,7 +10,7 @@ One command runs a model that has been tuned for a GPU, on the engine it was tun
 tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF
 ```
 
-The launcher detects the card, picks the recipe for that model on that card, pulls the engine image and the model weights it names, checks both, and starts an OpenAI-compatible server. The first target is the Tesla P100 (sm_60, 16 GB) running PN3M19, a P100-native 3-bit quantization of Qwen3.8-27B.
+The launcher detects the card, picks the recipe for that model on that card, pulls the engine image and the model weights it names, checks both, and starts an OpenAI-compatible server. The first target is the Tesla P100 (sm_60, 16 GB) running Qwen3.8-27B-PN3, a P100-native 3-bit quantization of Qwen3.8-27B.
 
 ## Decisions
 
@@ -23,7 +23,7 @@ The launcher detects the card, picks the recipe for that model on that card, pul
 
 ### Why not one image per model
 
-- **One engine build already serves several models.** The P100 engine runs PN3M19 and A1 (a Q3 splice of Qwen3.8-27B) from the same binary. Every tuning step was checked against A1, which had to produce bit-identical text, so a change for one model could not silently break the other. The PN kernels only engage on PN tensor types.
+- **One engine build already serves several models.** The P100 engine runs Qwen3.8-27B-PN3 and Qwen3.8-27B-UD-IQ3_XXS-Q3Floor (Unsloth's UD-IQ3_XXS with a 3-bit floor) from the same binary. Every tuning step was checked against Qwen3.8-27B-UD-IQ3_XXS-Q3Floor, which had to produce bit-identical text, so a change for one model could not silently break the other. The PN kernels only engage on PN tensor types.
 - **What differs per model is runtime configuration:** the engine's `GGML_CUDA_*` switches and the server's flags (context length, KV-cache type, batch sizes, offload). That is data, so it goes in a recipe.
 - **A fix should be one rebuild, not one rebuild per model.**
 
@@ -170,7 +170,7 @@ The image build is CI's: `.github/workflows/engine-image.yml` builds `containers
 
 ## The PN format
 
-PN3M19 uses two weight types, `pn3t` and `pn4t`, that only this engine implements. Their GGUF type ids (124 and 125) are fork-specific, so stock llama.cpp cannot load the file and could misread it.
+Qwen3.8-27B-PN3 uses two weight types, `pn3t` and `pn4t`, that only this engine implements. Their GGUF type ids (124 and 125) are fork-specific, so stock llama.cpp cannot load the file and could misread it.
 - The model's GGUF should carry a metadata key that names the format and its version.
 - The model card should say plainly that it needs the tensorless engine.
 - The format is specified in `engine/docs/` alongside its reference decoder and test vectors.
@@ -178,7 +178,7 @@ PN3M19 uses two weight types, `pn3t` and `pn4t`, that only this engine implement
 ## Open before the first release
 
 - **Receipts at the long contexts for the current champion.** Only the starting point of the decode climb has been measured at 32K and 65K; the champion has numbers only at short context.
-- **The P100 recipe's switch set.** The research lane's switch file accumulated history and lab paths. The PN3M19 recipe starts from the switches the measurements actually used, then is pruned to those that change its output or speed.
+- **The P100 recipe's switch set.** The research lane's switch file accumulated history and lab paths. The Qwen3.8-27B-PN3 recipe starts from the switches the measurements actually used, then is pruned to those that change its output or speed.
 - **A known CPU-path defect.** The CPU backend's PN dot product decodes the wrong codes. GPU paths are correct, and every recipe runs fully on the GPU. Fix it before any CPU or partial-offload recipe exists.
 - **The image's driver range,** confirmed on a real P100 host.
 - **The launcher's container support,** confirmed on rootless podman with CDI and on docker with the NVIDIA toolkit.

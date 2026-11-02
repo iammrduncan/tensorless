@@ -38,7 +38,7 @@ MODEL is the model's Hugging Face repo id, for example `iamMrDuncan/Qwen3.8-27B-
 
 - **Case does not matter**, as on the Hub. The cache directory always keeps the recipe's spelling: `models--iamMrDuncan--Qwen3.8-27B-PN3-GGUF`.
 - **`ORG/REPO@REVISION`** picks another commit (40 hex characters) of the repository. That run differs from what the recipe measured, so it needs `--allow-draft` and is reported as untuned. The downloaded file must still match the recipe's sha256.
-- **A recipe can also define a short name**, such as `pn3m19`, which works anywhere a repo id does.
+- **A recipe can also define a short name**, such as `pn3`, which works anywhere a repo id does.
 
 `tensorless models` lists the repo ids it knows.
 
@@ -135,7 +135,7 @@ Lists every recipe: model, card, status (draft or released, and "unpublished" wh
 
 ```sh
 tensorless info iamMrDuncan/Qwen3.8-27B-PN3-GGUF
-tensorless info pn3m19 --card p100 --json
+tensorless info pn3 --card p100 --json
 ```
 
 Shows a recipe exactly as it would run, with no GPU needed:

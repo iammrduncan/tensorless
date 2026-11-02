@@ -1,4 +1,4 @@
-# PN3M19 on one Tesla P100 16 GB.
+# Qwen3.8-27B-PN3 on one Tesla P100 16 GB.
 # [run] is the configuration the decode hill climb's judge measured: its llama-server flags and
 # its engine switches, unchanged. The model file is the one the climb measured (sha256 15ce2d44...).
 # Draft until the 0.1.0-rc1 image has run on a real P100 (docs/receipts/engine-v0.1.0/).
@@ -6,8 +6,8 @@ schema = 1
 status = "draft"
 
 [model]
-name       = "pn3m19"          # optional short alias; the repo id is the model's name
-title      = "Qwen3.8-27B PN3M19 (P100-native 3-bit, mix P0k+19)"
+name       = "pn3"          # optional short alias; the repo id is the model's name
+title      = "Qwen3.8-27B-PN3 (P100-native 3-bit, mix P0k+19)"
 hf_repo    = "iamMrDuncan/Qwen3.8-27B-PN3-GGUF"
 revision   = "c701b6690ec360b16d40f85df1cb76062e30cd38"
 file       = "Qwen3.8-27B-PN3-P0k19.gguf"

@@ -9,7 +9,7 @@ schema = 1                 # required, integer
 status = "draft"           # "draft" or "released"; the launcher refuses drafts unless --allow-draft
 
 [model]
-name       = "pn3m19"      # optional short alias; the repo id below is the model's name
+name       = "pn3"      # optional short alias; the repo id below is the model's name
 title      = "..."         # one-line human name
 hf_repo    = "org/repo"    # Hugging Face model repository: what users type, matched case-insensitively
 revision   = "<40-hex>"    # the repository commit, never a branch name

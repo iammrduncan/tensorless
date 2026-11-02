@@ -1,6 +1,6 @@
 # The PN weight format (PNX-FORMAT-v0)
 
-PN is a family of block-quantized weight types designed for the NVIDIA Tesla P100 (sm_60): every block is the same 34 bytes, values decode exactly in fp32, and a packed word holds whole pairs of codes, so a GPU lane can decode a word without crossing a 16-bit boundary. The tensorless engine implements two of its types, which PN3M19 uses.
+PN is a family of block-quantized weight types designed for the NVIDIA Tesla P100 (sm_60): every block is the same 34 bytes, values decode exactly in fp32, and a packed word holds whole pairs of codes, so a GPU lane can decode a word without crossing a 16-bit boundary. The tensorless engine implements two of its types, which Qwen3.8-27B-PN3 uses.
 
 The implementation in this repository is normative: `engine/ggml/src/ggml-common.h` (layout), `engine/ggml/src/ggml-quants.c` (`dequantize_row_pn3t`, `dequantize_row_pn4t`, `quantize_row_pnt_ref`, validation) and the golden tests in `engine/tests/test-pn-format.cpp`.
 
@@ -55,10 +55,10 @@ A row is invalid when any block's `d` is not finite (fp16 NaN or infinity), or, 
 
 ## Files that use PN
 
-A PN model is a GGUF file whose weight tensors use types 124 and 125 next to standard ggml types. PN3M19 is Qwen3.8-27B with mix **P0k+19**:
+A PN model is a GGUF file whose weight tensors use types 124 and 125 next to standard ggml types. Qwen3.8-27B-PN3 is Qwen3.8-27B with mix **P0k+19**:
 - `pn3t` on every GEMV tensor with K = 5120, except `attn_k` and `attn_v`;
 - `pn4t` on `attn_k`, `attn_v` and the tensors with K = 6144 and 17408;
 - 19 more tensors promoted to `pn4t`;
 - the remaining tensors keep their standard types: `token_embd` Q3_K, `output` Q4_K, `ssm_alpha`/`ssm_beta` Q8_0, norms F32.
 
-PN3M19 also applies a Hadamard rotation to the activations that reach the PN weights, which the engine performs.
+Qwen3.8-27B-PN3 also applies a Hadamard rotation to the activations that reach the PN weights, which the engine performs.

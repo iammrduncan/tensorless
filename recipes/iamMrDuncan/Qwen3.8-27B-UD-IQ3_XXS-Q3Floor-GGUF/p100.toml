@@ -1,4 +1,4 @@
-# Qwen3.8-27B UD-IQ3_XXS Q3Floor on one Tesla P100 16 GB.
+# Qwen3.8-27B-UD-IQ3_XXS-Q3Floor on one Tesla P100 16 GB.
 # Unsloth's Qwen3.8-27B-UD-IQ3_XXS.gguf (unsloth/Qwen3.8-27B-GGUF @ 4ca720788d1e01f1bff70c033e0d0028fd02e502) with a
 # 3-bit floor: its 91 sub-3-bit tensors re-quantized to IQ3_XXS (stock llama-quantize, Unsloth's BF16 and imatrix)
 # and token_embd taken from Unsloth's UD-IQ4_XS. Standard llama.cpp types; everything else, metadata included, is
@@ -11,7 +11,7 @@ status = "draft"
 
 [model]
 name       = "q3floor"           # optional short alias; the repo id is the model's name
-title      = "Qwen3.8-27B UD-IQ3_XXS Q3Floor (Unsloth's UD-IQ3_XXS with a 3-bit floor)"
+title      = "Qwen3.8-27B-UD-IQ3_XXS-Q3Floor (Unsloth's UD-IQ3_XXS with a 3-bit floor)"
 hf_repo    = "iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF"
 revision   = "0000000000000000000000000000000000000000"
 file       = "Qwen3.8-27B-UD-IQ3_XXS-Q3Floor.gguf"
@@ -78,7 +78,7 @@ summary = "Decode about 26.3 tok/s at short context and 24.5 / 22.9 tok/s at 32K
 decode_tps = { short = 26.26, ctx_32k = 24.52, ctx_65k = 22.92 }
 notes = [
   "short: 256 greedy tokens after a cold prompt of about 600 tokens, code prompt (prose 26.27), on this engine commit.",
-  "ctx_32k / ctx_65k: 1,024 greedy tokens after a 31.7K / 64.5K-token prompt, code (prose 24.54 / 22.97), measured on the hill climb's starting commit. A1's code path changed little after it: A1's text stayed bit-identical, and its speed was guarded within 3%.",
-  "The earlier kernel campaign also ran A1 with MTP speculation (about 28 tok/s at 32K/65K on its own engine version). That mode is not in this recipe yet.",
+  "ctx_32k / ctx_65k: 1,024 greedy tokens after a 31.7K / 64.5K-token prompt, code (prose 24.54 / 22.97), measured on the hill climb's starting commit. This model's code path changed little after it: its text stayed bit-identical, and its speed was guarded within 3%.",
+  "The earlier kernel campaign also ran this model with MTP speculation (about 28 tok/s at 32K/65K on its own engine version). That mode is not in this recipe yet.",
   "--jinja is not part of the measured configuration; it only applies the chat template for /v1/chat/completions.",
 ]

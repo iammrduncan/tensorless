@@ -228,7 +228,7 @@ func TestSplitModel(t *testing.T) {
 		{p100Repo, p100Repo, ""},
 		{p100Repo + "@" + rev, p100Repo, rev},
 		{p100Repo + "@" + strings.ToUpper(rev), p100Repo, rev},
-		{"pn3m19", "pn3m19", ""},
+		{"pn3", "pn3", ""},
 	}
 	for _, tc := range tests {
 		m, r, err := SplitModel(tc.in)
@@ -246,17 +246,17 @@ func TestSplitModel(t *testing.T) {
 func TestLoadIgnoresOtherFilesAndChecksNames(t *testing.T) {
 	one := strings.Replace(good, `file       = "dir/m1.gguf"`, `file = "m1.gguf"`, 1)
 	fsys := fstest.MapFS{
-		"README.md":              {Data: []byte("# recipes")},
-		"org/repo/p100.toml":     {Data: []byte(one)},
-		"org/repo/notes.md":      {Data: []byte("notes")},
-		"org/repo/old/x.toml":    {Data: []byte("not a recipe")},
-		"org/stray.toml":         {Data: []byte("not a recipe")},
-		"stray.toml":             {Data: []byte("not a recipe")},
-		".hidden/repo/x.toml":    {Data: []byte("not a recipe")},
-		"org/repo/.draft.toml":   {Data: []byte("not a recipe")},
-		"empty/README.md":        {Data: []byte("")},
-		"empty/also/README.md":   {Data: []byte("")},
-		"pn3m19/p100.toml/x.txt": {Data: []byte("")},
+		"README.md":            {Data: []byte("# recipes")},
+		"org/repo/p100.toml":   {Data: []byte(one)},
+		"org/repo/notes.md":    {Data: []byte("notes")},
+		"org/repo/old/x.toml":  {Data: []byte("not a recipe")},
+		"org/stray.toml":       {Data: []byte("not a recipe")},
+		"stray.toml":           {Data: []byte("not a recipe")},
+		".hidden/repo/x.toml":  {Data: []byte("not a recipe")},
+		"org/repo/.draft.toml": {Data: []byte("not a recipe")},
+		"empty/README.md":      {Data: []byte("")},
+		"empty/also/README.md": {Data: []byte("")},
+		"pn3/p100.toml/x.txt":  {Data: []byte("")},
 	}
 	s, err := Load(fsys, "dir")
 	if err != nil {
