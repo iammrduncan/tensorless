@@ -1,6 +1,6 @@
 # Recipes
 
-A recipe is one model on one card: `recipes/<model>/<card>.toml`. It names the exact engine image, the exact model file, and the settings that were measured. The launcher only runs what a recipe describes. Changing `[engine]` or `[run]` needs a new receipt.
+A recipe is one model on one card: `recipes/<org>/<repo>/<card>.toml`, where `<org>/<repo>` is the model's Hugging Face repository. Users name the model by that repo id: `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF`. It names the exact engine image, the exact model file, and the settings that were measured. The launcher only runs what a recipe describes. Changing `[engine]` or `[run]` needs a new receipt.
 
 ## Schema 1
 
@@ -9,9 +9,9 @@ schema = 1                 # required, integer
 status = "draft"           # "draft" or "released"; the launcher refuses drafts unless --allow-draft
 
 [model]
-name       = "pn3m19"      # what users type: tensorless run pn3m19
+name       = "pn3m19"      # optional short alias; the repo id below is the model's name
 title      = "..."         # one-line human name
-hf_repo    = "org/repo"    # Hugging Face model repository
+hf_repo    = "org/repo"    # Hugging Face model repository: what users type, matched case-insensitively
 revision   = "<40-hex>"    # the repository commit, never a branch name
 file       = "x.gguf"      # path of the weights file inside the repository
 sha256     = "<64-hex>"    # sha256 of that file; the launcher verifies it after download
@@ -31,7 +31,7 @@ arch    = "sm60"
 image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:<64-hex>"   # always by digest
 
 [run]
-alias       = "pn3m19"        # the served model name (/v1/models)
+alias       = "org/repo"      # the served model name (/v1/models); the repo id
 context     = 65536           # passed as -c
 threads_max = 8               # -t and -tb are min(host CPUs, threads_max)
 args        = ["-ngl", "99"]  # every other llama-server argument, in order

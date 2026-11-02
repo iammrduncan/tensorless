@@ -1,19 +1,19 @@
 # PN3M19 on one Tesla P100 16 GB.
 # [run] is the configuration the decode hill climb's judge measured: its llama-server flags and
-# its engine switches, unchanged. The hf_repo, revision, size and image digest are filled in when
-# the model upload and the engine-v0.1.0 image exist; until then this recipe is a draft.
+# its engine switches, unchanged. The model file is the one the climb measured (sha256 15ce2d44...).
+# Draft until the 0.1.0-rc1 image has run on a real P100 (docs/receipts/engine-v0.1.0/).
 schema = 1
 status = "draft"
 
 [model]
-name       = "pn3m19"
+name       = "pn3m19"          # optional short alias; the repo id is the model's name
 title      = "Qwen3.8-27B PN3M19 (P100-native 3-bit, mix P0k+19)"
-hf_repo    = "iammrduncan/Qwen3.8-27B-PN3M19-GGUF"
-revision   = "0000000000000000000000000000000000000000"
+hf_repo    = "iamMrDuncan/Qwen3.8-27B-PN3-GGUF"
+revision   = "c701b6690ec360b16d40f85df1cb76062e30cd38"
 file       = "Qwen3.8-27B-PN3-P0k19.gguf"
 sha256     = "15ce2d4469673f1f1753c55de3780cfe04311dd6f05cb41633d73df128e91476"
-size_bytes = 0
-license    = "to be confirmed with the upload"
+size_bytes = 12954114496
+license    = "Apache-2.0 (from Qwen/Qwen3.8-27B)"
 
 [card]
 id                 = "p100"
@@ -25,10 +25,10 @@ min_driver         = "525.60.13"
 [engine]
 release = "engine-v0.1.0"
 arch    = "sm60"
-image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7"   # 0.1.0-rc1
 
 [run]
-alias       = "pn3m19"
+alias       = "iamMrDuncan/Qwen3.8-27B-PN3-GGUF"
 context     = 65536
 threads_max = 8
 args = [

@@ -1,0 +1,33 @@
+# Patterns are anchored to the repository root (leading "/") wherever they could
+# match files inside engine/. engine/ is an exact export of the engine source and
+# carries upstream's own .gitignore. Some files that upstream tracks match it
+# (e.g. the vocab files in engine/models/*.gguf), so an export is added with
+# `git add -f engine`.
+
+# OS and editor files
+.DS_Store
+*.swp
+*~
+/.idea/
+/.vscode/
+
+# Launcher builds and test output
+/tensorless
+/dist/
+/*.test
+/coverage.out
+/coverage.html
+
+# Local engine builds
+/build/
+/engine/build/
+/engine/build-*/
+
+# Model weights and local caches: weights live on the Hugging Face Hub, never in git
+/*.gguf
+/models/
+/.cache/
+
+# Local environment and secrets
+.env
+.env.*

@@ -7,7 +7,7 @@ Status: agreed direction, 2026-11-02. The first release is engine-v0.1.0 with la
 One command runs a model that has been tuned for a GPU, on the engine it was tuned with:
 
 ```sh
-tensorless run pn3m19
+tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF
 ```
 
 The launcher detects the card, picks the recipe for that model on that card, pulls the engine image and the model weights it names, checks both, and starts an OpenAI-compatible server. The first target is the Tesla P100 (sm_60, 16 GB) running PN3M19, a P100-native 3-bit quantization of Qwen3.8-27B.
@@ -45,7 +45,7 @@ A second engine lineage would be justified only by a different runtime, or by a 
 |---|---|
 | **Engine release** | A tagged engine version, `engine-vX.Y.Z` (semver; the first is `engine-v0.1.0`). It is the exact source in `engine/` at that tag, plus its build configuration. The launcher is versioned separately, `vX.Y.Z`. |
 | **Image** | One build of a release for one GPU architecture, published as `ghcr.io/iammrduncan/tensorless-engine:<X.Y.Z>-<arch>` (e.g. `0.1.0-sm60`). Recipes refer to it by digest, never by tag. |
-| **Recipe** | One model on one card: the image digest, the model's Hugging Face repository, revision, file and sha256, the engine switches and server flags, the hardware requirements, and the measured numbers. `recipes/<model>/<card>.toml`. |
+| **Recipe** | One model on one card: the image digest, the model's Hugging Face repository, revision, file and sha256, the engine switches and server flags, the hardware requirements, and the measured numbers. `recipes/<org>/<repo>/<card>.toml`, named after the model's Hugging Face repository. |
 | **Receipt** | The measurements the release gate took for a recipe: decode and prefill speed at stated contexts, quality checks, the image digest and model hash they were taken on. `docs/receipts/<release>/`. |
 | **Champion** | A change that won a hill-climb campaign: it was faster than the campaign's best so far, under that campaign's guards. |
 
@@ -70,11 +70,11 @@ TensorFold's native CLI is the model: a binary that needs no Python, verifies wh
 
 | Command | What it does |
 |---|---|
-| `tensorless run MODEL` | `pull`, then `serve`. The one-command path. |
-| `tensorless pull MODEL` | Resolves the recipe for the detected card. Pulls the image by digest. Downloads the model at its pinned revision into the Hugging Face cache, resumably, and checks it by sha256. |
-| `tensorless serve MODEL` | Starts the engine container with the recipe's switches and flags. The model is mounted read-only. The server binds to `127.0.0.1` by default. Waits for `/health` and prints the endpoint. |
+| `tensorless run ORG/REPO` | `pull`, then `serve`. The one-command path. |
+| `tensorless pull ORG/REPO` | Resolves the recipe for the detected card. Pulls the image by digest. Downloads the model at its pinned revision into the Hugging Face cache, resumably, and checks it by sha256. |
+| `tensorless serve ORG/REPO` | Starts the engine container with the recipe's switches and flags. The model is mounted read-only. The server binds to `127.0.0.1` by default. Waits for `/health` and prints the endpoint. |
 | `tensorless models` | Lists the recipes, and marks which ones fit the detected card and are already pulled. |
-| `tensorless info MODEL` | Shows the recipe: engine release, image digest, model hash, memory needed, context, and the receipt numbers. |
+| `tensorless info ORG/REPO` | Shows the recipe: engine release, image digest, model hash, memory needed, context, and the receipt numbers. |
 | `tensorless doctor` | Checks the GPU and its compute capability, the driver branch, podman or docker, and NVIDIA container support (CDI or the container toolkit). Names each missing piece with the command that fixes it. |
 | `tensorless capabilities --json` | Version, the supported cards and architectures, and the known recipes. Needs no GPU, driver or model. |
 
@@ -87,39 +87,47 @@ Distribution: per-platform release archives with `.sha256` companions, as Tensor
 
 ## Recipes
 
+The schema is in [recipes/README.md](../recipes/README.md). An excerpt of the first recipe:
+
 ```toml
-# recipes/pn3m19/p100.toml
+# recipes/iamMrDuncan/Qwen3.8-27B-PN3-GGUF/p100.toml
 schema = 1
+status = "draft"
 
 [model]
-name     = "pn3m19"
-hf_repo  = "iammrduncan/Qwen3.8-27B-PN3M19-GGUF"   # placeholder until the upload exists
-revision = "<commit>"
-file     = "Qwen3.8-27B-PN3-P0k19.gguf"
-sha256   = "15ce2d4469673f1f1753c55de3780cfe04311dd6f05cb41633d73df128e91476"
-license  = "<the base model's license>"
+hf_repo  = "iamMrDuncan/Qwen3.8-27B-PN3-GGUF"   # what users type
+revision = "<40-hex commit>"
+file     = "<the GGUF file>"
+sha256   = "<64-hex>"
 
 [card]
-match         = { name = "Tesla P100-PCIE-16GB", compute = "6.0" }
-min_vram_mib  = 16000
-driver        = "<supported range, confirmed on a P100 host>"
+compute_capability = "6.0"
+min_memory_mib     = 16000
 
 [engine]
-release = "engine-v2026.11.0"
-arch    = "sm60"
+release = "engine-v0.1.0"
 image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:<digest>"
 
 [run]
-env  = { GGML_CUDA_FATTN_SM60 = "1", GGML_CUDA_FUSE_PRE_ADD = "1" }   # the measured switch set, pruned per model
-args = ["-ngl", "99", "-fa", "on", "-ctk", "q4_0", "-ctv", "q4_0", "-c", "65536", "-b", "512", "-ub", "512"]
+context = 65536
+args    = ["-np", "1", "-ngl", "99", "-ctk", "q4_0", "-ctv", "q4_0", "-b", "512", "-ub", "512", "-fa", "on", "..."]
+
+[run.env]
+GGML_CUDA_FATTN_SM60 = "1"   # ... the 21 switches the hill climb's judge ran with
 
 [receipt]
-gate      = "docs/receipts/engine-v2026.11.0/pn3m19-p100.md"
-decode    = { short = 0.0, ctx_32k = 0.0, ctx_65k = 0.0 }   # tok/s, filled by the gate
-prefill   = { ctx_4k = 0.0 }
+decode_tps = { short = 30.06 }
 ```
 
 A recipe's `[run]` section is the exact configuration the gate measured. Recipes are reviewed like code: a pull request that changes `[run]` or `[engine]` needs a new receipt.
+
+## Models built on someone else's file
+
+Some tuned models are a small change to another publisher's file. The UD-IQ3_XXS Q3Floor model is one: Unsloth's `Qwen3.8-27B-UD-IQ3_XXS.gguf` with its 91 sub-3-bit tensors re-quantized to IQ3_XXS, and `token_embd` from their UD-IQ4_XS. Its other 73% of bytes are Unsloth's, unchanged. Such models are hosted whole, in our namespace:
+
+- **The name says what the file is.** It keeps the original publisher's own label, so their users recognize it ("UD" is Unsloth Dynamic), and adds what changed ("Q3Floor").
+- **The bytes are exactly the file that was measured.** Only the repository and file names change. The GGUF's internal metadata stays the original publisher's, because editing it would change the sha256 the receipts were measured on.
+- **The model card credits the original publisher,** names their repository and revision, lists every change, and carries their license.
 
 ## The engine image
 
