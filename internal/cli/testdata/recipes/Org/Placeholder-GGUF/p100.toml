@@ -1,0 +1,29 @@
+# A draft whose revision, image digest and size are placeholders.
+schema = 1
+status = "draft"
+
+[model]
+name       = "placeholder"
+hf_repo    = "Org/Placeholder-GGUF"
+revision   = "0000000000000000000000000000000000000000"
+file       = "m.gguf"
+sha256     = "1111111111111111111111111111111111111111111111111111111111111111"
+size_bytes = 0
+license    = "test"
+
+[card]
+id                 = "p100"
+compute_capability = "6.0"
+min_memory_mib     = 16000
+min_driver         = "525.60.13"
+
+[engine]
+release = "engine-v0.0.0"
+arch    = "sm60"
+image   = "ghcr.io/x/engine@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[run]
+alias       = "Org/Placeholder-GGUF"
+context     = 4096
+threads_max = 8
+args        = ["-ngl", "99"]

@@ -1,0 +1,27 @@
+# A draft whose image, hash and size are real but whose revision is not yet.
+schema = 1
+status = "draft"
+
+[model]
+hf_repo    = "Org/Partial-GGUF"
+revision   = "0000000000000000000000000000000000000000"
+file       = "m.gguf"
+sha256     = "1111111111111111111111111111111111111111111111111111111111111111"
+size_bytes = 1234
+license    = "test"
+
+[card]
+id                 = "p100"
+compute_capability = "6.0"
+min_memory_mib     = 16000
+min_driver         = "525.60.13"
+
+[engine]
+release = "engine-v0.0.0"
+arch    = "sm60"
+image   = "ghcr.io/x/engine@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+[run]
+alias       = "Org/Partial-GGUF"
+context     = 4096
+threads_max = 8

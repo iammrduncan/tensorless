@@ -1,0 +1,27 @@
+# A draft whose every pinned value is a placeholder.
+schema = 1
+status = "draft"
+
+[model]
+hf_repo    = "Org/AllZero-GGUF"
+revision   = "0000000000000000000000000000000000000000"
+file       = "m.gguf"
+sha256     = "0000000000000000000000000000000000000000000000000000000000000000"
+size_bytes = 0
+license    = "test"
+
+[card]
+id                 = "p100"
+compute_capability = "6.0"
+min_memory_mib     = 16000
+min_driver         = "525.60.13"
+
+[engine]
+release = "engine-v0.0.0"
+arch    = "sm60"
+image   = "ghcr.io/x/engine@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+[run]
+alias       = "Org/AllZero-GGUF"
+context     = 4096
+threads_max = 8
