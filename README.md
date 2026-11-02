@@ -2,6 +2,8 @@
 
 **Join us on [Discord](https://discord.gg/3Qs2uejUf9)**: questions, results from your own P100, and ideas.
 
+**[Credits](CREDITS.md)**: the projects, papers, models, datasets and people tensorless is built on.
+
 Custom engine + quant inference for P100s. A ~$100 GPU card, and we will make it fly.
 
 tensorless runs a model that was tuned for your GPU, on the engine it was tuned with, in one command:
