@@ -10,6 +10,8 @@ tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF
 
 The first target is the NVIDIA Tesla P100 (16 GB, sm_60), running Qwen3.8-27B-PN3: a 3-bit quantization of Qwen3.8-27B made for this card, served by a llama.cpp-based engine with kernels written for Pascal.
 
+Join us on [Discord](https://discord.gg/3Qs2uejUf9).
+
 **Status: v0.1.0 released.** The launcher, the engine image `0.1.0-sm60` and both models are published, and the published image has been measured on a real P100 for each launch target. How the pieces fit together, and how engine releases are made, is in [docs/design.md](docs/design.md).
 
 ## Launch targets
@@ -62,6 +64,10 @@ Stop the GPU's other users first: the model and its 65,536-token context take ne
 - **Images**: one container image per engine release and GPU architecture, pinned by digest.
 - **Recipes** (`recipes/<org>/<repo>/<card>.toml`): one model, named by its Hugging Face repository, on one card. A recipe names the exact image, model file, settings and measured numbers.
 - **Launcher** (`tensorless`): detects your GPU, picks the recipe, pulls and verifies the image and the model, and starts an OpenAI-compatible server.
+
+## Community
+
+Questions, results from your own P100, or ideas: join us on [Discord](https://discord.gg/3Qs2uejUf9).
 
 ## License
 

@@ -50,6 +50,10 @@ On one Tesla P100 with the tensorless engine (engine-v0.1.0's source, greedy dec
 | Decode, 256 tokens after a ~600-token prompt | 26.3 |
 | Decode, 1,024 tokens after a 32K / 65K prompt | 24.5 / 22.9 |
 
+## Community
+
+Questions, results from your own P100, or ideas: join us on [Discord](https://discord.gg/3Qs2uejUf9).
+
 ## Credits
 
 - **The Qwen team (Alibaba)**: Qwen3.8-27B.
