@@ -158,3 +158,59 @@ func TestBenchPrompt(t *testing.T) {
 		t.Errorf("BenchPrompt cut by bytes, not characters")
 	}
 }
+
+// closingServer fakes a llama-server that ends each streamed /completion with a
+// complete chunked body and then closes the connection, without sending
+// "Connection: close" (seen through a kubectl port-forward on a real P100).
+func closingServer(t *testing.T, alias string) (*httptest.Server, *int) {
+	var mu sync.Mutex
+	n := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"status":"ok"}`)) })
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"object":"list","data":[{"id":%q}]}`, alias)
+	})
+	mux.HandleFunc("/completion", func(w http.ResponseWriter, r *http.Request) {
+		var req completionRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		mu.Lock()
+		n++
+		mu.Unlock()
+		conn, buf, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		buf.WriteString("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+		chunk := func(s string) { fmt.Fprintf(buf, "%x\r\n%s\r\n", len(s), s) }
+		for i := 0; i < req.NPredict; i++ {
+			chunk(fmt.Sprintf("data: {\"content\":\"t%d \",\"stop\":false}\n\n", i))
+		}
+		chunk(fmt.Sprintf("data: {\"content\":\"\",\"stop\":true,\"timings\":{\"predicted_n\":%d}}\n\n", req.NPredict))
+		buf.WriteString("0\r\n\r\n")
+		buf.Flush()
+		// Close late, as the port-forward did: by then the client has reused the
+		// connection for its next request, which gets no answer.
+		time.Sleep(100 * time.Millisecond)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv, &n
+}
+
+func TestBenchServerClosesAfterStream(t *testing.T) {
+	ta := newApp(t)
+	dir := ta.published(t, []byte("x"))
+	srv, n := closingServer(t, "Org/Model-GGUF")
+	h, p := hostPort(t, srv.URL)
+	if code := ta.run("bench", "org/model-gguf", "--recipes", dir, "--host", h, "--port", p, "--runs", "3", "--tokens", "10", "--json"); code != 0 {
+		t.Fatalf("exit %d: %s", code, ta.stderr)
+	}
+	if *n != 4 {
+		t.Errorf("%d completions served, want a warm-up and 3 runs", *n)
+	}
+}

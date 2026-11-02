@@ -180,6 +180,11 @@ func (a *App) completion(ctx context.Context, client *http.Client, base, prompt 
 		return benchRun{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// One connection per completion. llama-server, seen through a port-forward, can
+	// close the connection after a streamed response without sending "Connection:
+	// close". A kept-alive connection reused for the next POST then fails, and Go
+	// does not retry a POST.
+	req.Close = true
 	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {

@@ -30,8 +30,25 @@ The decode climb held quality at its starting point. That starting point was gat
 
 The prose miss belongs to the quantization: the format's own fp32 reference path scores 6.07572, so the fast kernels account for 0.5% of the gap. It was accepted.
 
+## The published image on a P100 (2026-11-02)
+
+The image itself, `ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7` (0.1.0-rc1), was run on one Tesla P100-PCIE-16GB with exactly the recipe's switches and flags:
+- the model file was checked against sha256 `15ce2d44…`;
+- the image ran as a cluster workload on the lab's P100 node;
+- the card reported compute capability 6.0 and 16,269 MiB.
+
+| Measure | Value |
+|---|---:|
+| `tensorless bench` decode, median of 3 runs (256 tokens after a 429-token prompt) | **30.03 tok/s** (30.03 / 29.83 / 30.13) |
+| Against the research receipt (30.06) | −0.1% |
+| llama-server's own decode timer, 3 runs of 256 tokens after a 45-token prompt | 29.97 / 29.94 / 29.94 tok/s |
+| Time to first token, 429-token prompt | 4.46 s (median) |
+| GPU memory, idle / generating | 13,997 / 14,577 MiB |
+| Load to listening, page cache warm | 3.6 s |
+
+`bench` ran on a Mac through Wi-Fi, ssh and a port-forward to the server. The network adds latency to the time to first token, but not to the decode rate, which is timed between streamed tokens.
+
 ## Not measured yet
 
-- **The published image itself.** CI builds `ghcr.io/iammrduncan/tensorless-engine:0.1.0-sm60` from the same source and CUDA flags, with a portable CPU baseline instead of the builder's CPU. Its first run on a P100 should land near the decode numbers above. Run `tensorless bench iamMrDuncan/Qwen3.8-27B-PN3-GGUF` and record the result here.
 - **32K and 65K context for this engine.** At those contexts only the climb's starting point was measured: 7.55 / 7.39 tok/s for Qwen3.8-27B-PN3 against 24.52 / 22.92 for Qwen3.8-27B-UD-IQ3_XXS-Q3Floor. Attention costs a larger share of a 30 tok/s token than of a 7.5 tok/s one, so expect this engine's long-context decode to be below 30.
 - **Speculative decoding** for Qwen3.8-27B-PN3.
