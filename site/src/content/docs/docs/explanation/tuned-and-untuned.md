@@ -52,4 +52,4 @@ Two more kinds of recipe sit outside the tuned path:
 - **A draft** is a recipe that has not passed the release gate. Its settings may be right, but nothing has confirmed them on the image it names. The launcher refuses it unless you pass `--allow-draft`, and says it is using a draft when you do. `MODEL@REVISION` needs the same flag, for the same reason: no gate measured it.
 - **An unpublished recipe** still has placeholder values: an all-zero revision or image digest, or a model size of 0. It cannot run at all, even with `--allow-draft`, because there is nothing real to pull. `tensorless info` and `--dry-run` still show it, so its plan can be reviewed before the upload exists.
 
-Both released recipes in tensorless v0.1.0 need no flags. `tensorless models` shows each recipe's status.
+Both released recipes in tensorless v0.2.0 need no flags. `tensorless models` shows each recipe's status.

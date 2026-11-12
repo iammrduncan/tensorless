@@ -88,7 +88,7 @@ The [receipts](../reference/receipts.md) have the full measurements.
 
 ### What a climb does not guarantee
 
-A hill climb finds changes that help the case it measures. The decode climb measured decode at short context, and the prefill climb measured a prompt of about 4,100 tokens. Neither re-measured 32K and 65K contexts, where attention costs more of each token, so those numbers are still open ([Known limits](../project/known-limits.md)). Each climb also held the numerics against its own starting point, so the model's quality checks are the release gate's to repeat. The release gate is meant to measure long contexts too; that measurement is still outstanding. See [How a release is made](releases-and-receipts.md).
+A hill climb finds changes that help the case it measures. The decode climb measured decode at short context, and the prefill climb measured a prompt of about 4,100 tokens. Neither re-measured 32K and 65K contexts, where attention costs more of each token, so those numbers are still open ([Known limits](../project/known-limits.md)). Each climb also held the numerics against its own starting point, so the model's quality checks are the release gate's to repeat, and that is still outstanding too. And a judge only sees the requests it sends: the prefill climb's judge never sent a follow-up request on a cached prompt, and its champion aborted on one. A run of the engine before the release found it, and engine-v0.2.0 has the fix ([Receipts](../reference/receipts.md#a-fault-found-before-the-release)). See [How a release is made](releases-and-receipts.md).
 
 ## Earlier work
 

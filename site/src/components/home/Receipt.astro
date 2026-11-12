@@ -1,35 +1,35 @@
 ---
 // The release's measurement, printed as a receipt: every line from
-// docs/receipts/engine-v0.1.0/Qwen3.8-27B-PN3-GGUF-p100.md and engine/PROVENANCE.md.
+// docs/receipts/engine-v0.2.0/Qwen3.8-27B-PN3-GGUF-p100.md and engine/PROVENANCE.md.
 import { recipes, release } from "../../release.mjs";
 
 const r = recipes.find((x) => x.model.name === "pn3");
 const digest = release.digest.replace("sha256:", "");
 const lines: [string, string][] = [
   ["center", "TENSORLESS BENCH"],
-  ["center", "2026-11-02 · ONE TESLA P100-PCIE-16GB"],
+  ["center", "2026-11-12 · ONE TESLA P100-PCIE-16GB"],
   ["rule", ""],
-  ["kv", `IMAGE|0.1.0-sm60`],
+  ["kv", `IMAGE|0.2.0-sm60`],
   ["kv", `DIGEST|${digest.slice(0, 12)}…`],
   ["kv", `MODEL|QWEN3.8-27B-PN3`],
   ["kv", `FILE SHA256|${r.model.sha256.slice(0, 12)}…`],
   ["kv", `PROMPT|429 TOKENS`],
   ["kv", `GENERATE|256 TOKENS, GREEDY`],
   ["rule", ""],
-  ["kv", "RUN 1|30.03 TOK/S"],
-  ["kv", "RUN 2|29.83 TOK/S"],
-  ["kv", "RUN 3|30.13 TOK/S"],
+  ["kv", "RUN 1|30.44 TOK/S"],
+  ["kv", "RUN 2|30.48 TOK/S"],
+  ["kv", "RUN 3|30.49 TOK/S"],
   ["rule", ""],
-  ["big", "MEDIAN|30.03 TOK/S"],
-  ["kv", "RESEARCH RECEIPT|30.06 TOK/S"],
-  ["kv", "DIFFERENCE|−0.1%"],
-  ["kv", "FIRST TOKEN|4.46 S"],
-  ["kv", "GPU MEMORY|14.24 GIB"],
-  ["kv", "LOAD TO LISTENING|3.6 S"],
+  ["big", "MEDIAN|30.48 TOK/S"],
+  ["kv", "RESEARCH RECEIPT|30.43 TOK/S"],
+  ["kv", "DIFFERENCE|+0.2%"],
+  ["kv", "FIRST TOKEN|2.60 S"],
+  ["kv", "PREFILL, 3,744 TOKENS|198.9 TOK/S"],
+  ["kv", "GPU MEMORY|15.02 GIB"],
   ["rule", ""],
   ["bars", digest],
 ];
-const receipt = "https://github.com/iammrduncan/tensorless/blob/main/docs/receipts/engine-v0.1.0/Qwen3.8-27B-PN3-GGUF-p100.md";
+const receipt = "https://github.com/iammrduncan/tensorless/blob/main/docs/receipts/engine-v0.2.0/Qwen3.8-27B-PN3-GGUF-p100.md";
 // A barcode drawn from the image digest: one bar per hex digit, its width from the digit.
 const bars = [...digest.slice(0, 40)].map((c) => 1 + (parseInt(c, 16) % 4));
 ---
@@ -41,13 +41,14 @@ const bars = [...digest.slice(0, 40)].map((c) => 1 + (parseInt(c, 16) % 4));
       <h2 id="receipt-title" class="h2" data-reveal>Every release comes with a receipt.</h2>
       <p class="lede" data-reveal>
         Before a recipe is marked released, its exact image runs on a real P100 and <code>tensorless bench</code> measures it.
-        This is the receipt of v0.1.0's main target. The digest it measured is the digest the recipe pins, promoted without a
+        This is the receipt of v0.2.0's main target. The digest it measured is the digest the recipe pins, promoted without a
         rebuild.
       </p>
       <p class="lede" data-reveal>
-        The engine itself came out of an automated hill climb: <strong>131 judged attempts, 28 confirmed improvements</strong>,
-        taking this model from <span class="mark">7.74 to 30.06 tokens a second</span> on the same card, with every step checked
-        against the model's starting numerics.
+        The engine itself came out of two automated hill climbs, with every step checked against the model's starting numerics.
+        The first took this model's decode from <span class="mark">7.74 to 30 tokens a second</span> in
+        <strong>28 confirmed improvements</strong>. The second took its prompt speed from
+        <span class="mark">121 to 200 tokens a second</span> in <strong>26 more</strong>, on the same card.
       </p>
       <p data-reveal><a class="btn" href={receipt}>Read the full receipt</a></p>
     </div>
@@ -55,7 +56,7 @@ const bars = [...digest.slice(0, 40)].map((c) => 1 + (parseInt(c, 16) % 4));
     <div class="printer" data-printer>
       <div class="slot" aria-hidden="true"></div>
       <div class="paper-clip">
-        <div class="paper mono" data-paper aria-label="Receipt of the v0.1.0 benchmark">
+        <div class="paper mono" data-paper aria-label="Receipt of the v0.2.0 benchmark">
           {
             lines.map(([kind, text]) =>
               kind === "rule" ? (

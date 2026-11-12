@@ -47,7 +47,7 @@ const payload = {
     </div>
     <div class="cell r">
       <p class="k">decode, one P100</p>
-      <p class="big"><span data-tps>30.03</span><small> tok/s</small></p>
+      <p class="big"><span data-tps>30.48</span><small> tok/s</small></p>
       <p class="line"><span data-gb>11.22</span> GiB of weights read per token</p>
     </div>
   </div>
@@ -815,7 +815,7 @@ const payload = {
       $("[data-tps]").textContent = D!.tps[m].toFixed(2);
     }
 
-    const passSeconds = () => (prefill ? (speed === "slow" ? 7 : 4.46) : speed === "slow" ? 8 : 1 / D!.tps[model]);
+    const passSeconds = () => (prefill ? (speed === "slow" ? 7 : 2.6) : speed === "slow" ? 8 : 1 / D!.tps[model]);
 
     function resize() {
       const w = root!.clientWidth, h = root!.clientHeight;

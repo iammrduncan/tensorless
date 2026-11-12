@@ -18,10 +18,10 @@ Update the launcher to get new launch targets and recipes that moved to a newer 
 Run the install script again, with the release you want:
 
 ```sh
-curl -fsSL https://tensorless.dev/install.sh | TENSORLESS_VERSION=0.1.0 sh
+curl -fsSL https://tensorless.dev/install.sh | TENSORLESS_VERSION=0.2.0 sh
 ```
 
-Replace `0.1.0` with the version you want. Without `TENSORLESS_VERSION`, the script installs the release it names as its default. If you installed somewhere other than `~/.local/bin`, set `TENSORLESS_INSTALL_DIR` to the same place, so that the new binary replaces the old one.
+Replace `0.2.0` with the version you want. Without `TENSORLESS_VERSION`, the script installs the release it names as its default. If you installed somewhere other than `~/.local/bin`, set `TENSORLESS_INSTALL_DIR` to the same place, so that the new binary replaces the old one.
 
 If you installed from an archive, download and check the new archive the same way, and copy its binary over the old one. See [Install the launcher](install-launcher.md#install-from-a-release-archive).
 

@@ -21,20 +21,20 @@ The build compiles the CUDA kernels on every core of the machine, so it takes a 
 ## 1. Get the source at a release
 
 ```sh
-git clone --branch engine-v0.1.0 --depth 1 https://github.com/iammrduncan/tensorless
+git clone --branch engine-v0.2.0 --depth 1 https://github.com/iammrduncan/tensorless
 cd tensorless
 ```
 
-`engine-v0.1.0` is the tag of the engine source in the `0.1.0-sm60` image. To build your own change, check out your branch instead.
+`engine-v0.2.0` is the tag of the engine source in the `0.2.0-sm60` image. To build your own change, check out your branch instead.
 
 ## 2. Build
 
 From the repository root, which is the build context:
 
 ```sh
-podman build -f containers/engine.sm60.Containerfile --build-arg VERSION=0.1.0-local \
-  -t tensorless-engine:0.1.0-local-sm60 .
-# or: docker build -f containers/engine.sm60.Containerfile --build-arg VERSION=0.1.0-local -t tensorless-engine:0.1.0-local-sm60 .
+podman build -f containers/engine.sm60.Containerfile --build-arg VERSION=0.2.0-local \
+  -t tensorless-engine:0.2.0-local-sm60 .
+# or: docker build -f containers/engine.sm60.Containerfile --build-arg VERSION=0.2.0-local -t tensorless-engine:0.2.0-local-sm60 .
 ```
 
 `VERSION` is written into the image as `/opt/tensorless/VERSION`. Pick a label that says the image is yours.
@@ -46,17 +46,17 @@ The build stage configures the engine with the measured CUDA settings (`sm_60` o
 The image lists the sha256 of every file it ships under `/opt/tensorless`. Check them, and read the version:
 
 ```sh
-podman run --rm --entrypoint sh tensorless-engine:0.1.0-local-sm60 \
+podman run --rm --entrypoint sh tensorless-engine:0.2.0-local-sm60 \
   -c 'cd /opt/tensorless && sha256sum -c --quiet SHA256SUMS && cat VERSION'
 ```
 
-It prints `0.1.0-local` and nothing else. A mismatched file prints `FAILED`.
+It prints `0.2.0-local` and nothing else. A mismatched file prints `FAILED`.
 
 ## 4. Run it
 
 Your image's digest is not the release's. Builds are not byte for byte reproducible: the base images and packages they install change over time, and so do the layers' timestamps. The recipes pin the published digest, so the launcher does not use your build.
 
-Run it as [Run the engine image without the launcher](without-launcher.md) shows, with `tensorless-engine:0.1.0-local-sm60` in place of the published image. To use it through the launcher instead, push it to a registry you control and pin its digest in a recipe of your own: see [Try a recipe of your own](write-a-recipe.md).
+Run it as [Run the engine image without the launcher](without-launcher.md) shows, with `tensorless-engine:0.2.0-local-sm60` in place of the published image. To use it through the launcher instead, push it to a registry you control and pin its digest in a recipe of your own: see [Try a recipe of your own](write-a-recipe.md).
 
 :::note
 A run on your own build is not what the receipts measured, even from the same source. To compare, measure it with `tensorless bench`: see [Benchmark a running server](../use/benchmark.md).

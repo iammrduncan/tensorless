@@ -39,11 +39,11 @@ iamMrDuncan/Qwen3.8-27B-PN3-GGUF on p100, 3 runs of 256 tokens (median):
   decode         <decode> tok/s
   TTFT           <ttft> ms
   prompt tokens  <prompt>
-  receipt        30.06 tok/s decode (short); this run is <difference>%
+  receipt        30.43 tok/s decode (short); this run is <difference>%
 The receipt was measured with a different prompt, so expect a few percent of difference.
 ```
 
-On the P100 that measured the release, the published image gave a median of 30.03 tok/s for this model, with a 429-token prompt: −0.1% against the receipt. Qwen3.8-27B-UD-IQ3_XXS-Q3Floor gave 26.18 tok/s against its receipt of 26.26. The [receipts](../../reference/receipts.md) have the details.
+On the P100 that measured the release, the published image gave a median of 30.48 tok/s for this model, with a 429-token prompt: +0.2% against the receipt. Qwen3.8-27B-UD-IQ3_XXS-Q3Floor gave 26.69 tok/s against its receipt of 26.53. The [receipts](../../reference/receipts.md) have the details.
 
 ## What it measures
 

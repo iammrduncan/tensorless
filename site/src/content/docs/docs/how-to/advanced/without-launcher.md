@@ -26,8 +26,8 @@ You need:
 ## 1. Pull the engine image by digest
 
 ```sh
-podman pull ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7
-# or: docker pull ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7
+podman pull ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7
+# or: docker pull ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7
 ```
 
 Pull by digest, not by tag: the digest is what the receipt measured.
@@ -65,7 +65,7 @@ podman run -d --rm --name tensorless-pn3 \
   -e GGML_CUDA_PREFILL_CHUNK_GEMM=1 -e GGML_CUDA_PREFILL_CHUNK_STREAMS=3 \
   -e GGML_CUDA_PREFILL_DEQ_F4=1 -e GGML_CUDA_PREFILL_REP_DIRECT=1 \
   -e GGML_CUDA_SM86_GDN_COLS=8 -e GGML_CUDA_SM86_IQ3_SMEM_GRID=1 \
-  ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7 \
+  ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7 \
   -m /models/Qwen3.8-27B-PN3-P0k19.gguf --host 0.0.0.0 --port 8080 -c 65536 \
   --alias iamMrDuncan/Qwen3.8-27B-PN3-GGUF -t 8 -tb 8 \
   -np 1 -ngl 99 -ot token_embd.weight=CUDA0 -ctk q4_0 -ctv q4_0 -sm none -lm none -fit off \

@@ -18,8 +18,8 @@ tensorless models
 
 ```text
 MODEL                                            CARD  STATUS    ENGINE         FITS  CACHED
-iamMrDuncan/Qwen3.8-27B-PN3-GGUF                 p100  released  engine-v0.1.0  yes   yes
-iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF  p100  released  engine-v0.1.0  yes   no
+iamMrDuncan/Qwen3.8-27B-PN3-GGUF                 p100  released  engine-v0.2.0  yes   yes
+iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF  p100  released  engine-v0.2.0  yes   no
 ```
 
 - **FITS** says whether a GPU on this host matches the recipe (`yes`, `no`, or `unknown` without a GPU).

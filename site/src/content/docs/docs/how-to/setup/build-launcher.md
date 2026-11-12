@@ -16,7 +16,7 @@ Build the launcher yourself when your platform has no release archive, or to try
 ## Install with `go install`
 
 ```sh
-go install github.com/iammrduncan/tensorless/cmd/tensorless@v0.1.0
+go install github.com/iammrduncan/tensorless/cmd/tensorless@v0.2.0
 ```
 
 Go puts the binary in `$(go env GOPATH)/bin`, or in `$GOBIN` if you set it. `@latest` installs the newest release, and `@main` the newest commit of `main`.
@@ -46,7 +46,7 @@ tensorless dev, linux/amd64
    go build -ldflags "-X main.version=$(git describe --tags --always --match 'v*') -X main.commit=$(git rev-parse --short HEAD)" ./cmd/tensorless
    ```
 
-   `--match 'v*'` names the launcher's own tags (`v0.1.0`). The repository also has engine tags (`engine-v0.1.0`), which `git describe` would otherwise pick.
+   `--match 'v*'` names the launcher's own tags (`v0.2.0`). The repository also has engine tags (`engine-v0.2.0`), which `git describe` would otherwise pick.
 
 3. Check it:
 
@@ -60,7 +60,7 @@ To build the way the release does, static and with the full commit, for any plat
 
 ```sh
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
-  -ldflags "-s -w -X main.version=0.1.0 -X main.commit=$(git rev-parse HEAD)" \
+  -ldflags "-s -w -X main.version=0.2.0 -X main.commit=$(git rev-parse HEAD)" \
   -o tensorless ./cmd/tensorless
 ```
 

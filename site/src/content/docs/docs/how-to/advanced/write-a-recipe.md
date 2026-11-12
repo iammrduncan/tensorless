@@ -63,7 +63,7 @@ A recipe with a mistake fails with every problem listed, for example:
 
 ```text
 tensorless: /home/user/my-recipes/iamMrDuncan/Qwen3.8-27B-PN3-GGUF/p100.toml: invalid recipe:
-  - engine.image must be pinned by digest (name@sha256:<64 hex>), not "ghcr.io/iammrduncan/tensorless-engine:0.1.0-sm60"
+  - engine.image must be pinned by digest (name@sha256:<64 hex>), not "ghcr.io/iammrduncan/tensorless-engine:0.2.0-sm60"
   - run.args must not set -c; the launcher sets it
 ```
 

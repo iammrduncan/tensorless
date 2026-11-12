@@ -13,7 +13,7 @@ This page explains what `tensorless run` does, piece by piece, and why it is bui
 tensorless is four things that fit together:
 
 - **The engine:** the inference code, a fork of llama.cpp with kernels written for the Tesla P100. Its source is in the repository's [`engine/`](https://github.com/iammrduncan/tensorless/tree/main/engine) folder.
-- **The image:** one container image per engine release and GPU architecture, such as `ghcr.io/iammrduncan/tensorless-engine:0.1.0-sm60`. It holds the built `llama-server` and nothing else that matters to speed.
+- **The image:** one container image per engine release and GPU architecture, such as `ghcr.io/iammrduncan/tensorless-engine:0.2.0-sm60`. It holds the built `llama-server` and nothing else that matters to speed.
 - **The recipe:** one model on one card, in a small TOML file. It names the exact image (by digest), the exact model file (by revision and sha256), the settings that were measured, and what those settings measured.
 - **The launcher:** the `tensorless` command. It reads the recipe and makes it happen on your machine.
 
