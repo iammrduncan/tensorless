@@ -155,6 +155,15 @@ struct llama_context {
 
     int encode(const llama_batch & batch_inp);
     int decode(const llama_batch & batch_inp);
+    int decode_core(const llama_batch & batch_inp, uint32_t n_ubatch_max);
+
+    // outputless batches that decode holds back, not yet applied to the memory (see decode)
+    bool pairable(const llama_batch & batch_inp) const;
+    void pend_add(const llama_batch & batch_inp);
+    int  pend_run(uint32_t n_ubatch_max);
+    int  flush_pend();
+    bool pend_touches(llama_seq_id seq_id, llama_pos p0) const;
+    std::pair<llama_pos, llama_pos> pend_pos_range(llama_seq_id seq_id) const;
 
     //
     // state save/load
@@ -433,6 +442,18 @@ private:
     std::map<llama_seq_id, llama_memory_buffers> mem_storage;
 
     bool has_evaluated_once = false;
+
+    // an outputless batch (or two) that decode has not applied yet; the next batch of the same kind merges with it
+    // into one ubatch of up to 2 * n_ubatch tokens. Flushed before any op that could read or change the memory.
+    struct pending_batch {
+        std::vector<llama_token>  tok;
+        std::vector<llama_pos>    pos;
+        std::vector<int32_t>      n_seq;
+        std::vector<llama_seq_id> seq;    // n_seq ids per token, flattened
+        std::vector<int8_t>       logits; // all zero: no outputs
+        int32_t n = 0;
+    } pend;
+    int64_t n_pairs = 0; // merged ubatches formed so far
 
     // env: LLAMA_GRAPH_REUSE_DISABLE
     bool graph_reuse_disable = false;

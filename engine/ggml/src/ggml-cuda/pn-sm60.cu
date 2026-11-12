@@ -22,11 +22,7 @@
 #include <string>
 #include <unordered_set>
 
-static __device__ __forceinline__ uint32_t pn_ld_word(const uint8_t * GGML_RESTRICT p) {
-    return (uint32_t) p[0] | ((uint32_t) p[1] << 8) | ((uint32_t) p[2] << 16) | ((uint32_t) p[3] << 24);
-}
-
-// Same packed word as pn_ld_word, fetched as two 2-byte halves. A block is 34 B, so 34*b + 2 + 4*wi is
+// A packed word, fetched as two 2-byte halves. A block is 34 B, so 34*b + 2 + 4*wi is
 // always even: both halves are 2-byte aligned and the bytes are identical, hence bit-identical weights.
 static __device__ __forceinline__ uint32_t pn_ld_word16(const uint8_t * GGML_RESTRICT p) {
     const uint16_t lo = *reinterpret_cast<const uint16_t *>(p);
@@ -61,71 +57,9 @@ static __device__ __forceinline__ void pn_stage_x(
     }
 }
 
-// one warp per output row, NC activation columns (1..4)
-template <int QK, int BITS, int NC>
-static __global__ void pn_gemv_kernel(
-        const uint8_t * GGML_RESTRICT w, const float * GGML_RESTRICT x, float * GGML_RESTRICT dst,
-        const int64_t k, const int64_t nrows) {
-    const int64_t row = (int64_t) blockIdx.x*blockDim.y + threadIdx.y;
-    if (row >= nrows) {
-        return;
-    }
-
-    const int     lane = threadIdx.x;
-    const int64_t nblk = k / QK;
-    const uint8_t * GGML_RESTRICT wr = w + row*nblk*PN_BLOCK_BYTES;
-
-    constexpr int Z        = 1 << (BITS - 1);
-    constexpr int MASK     = (1 << BITS) - 1;
-    constexpr int PER_WORD = (BITS == 3) ? 10 : 8;   // codes in one u32 word
-    constexpr int WORDS    = 8;
-
-    float acc[NC];
-#pragma unroll
-    for (int c = 0; c < NC; ++c) {
-        acc[c] = 0.0f;
-    }
-
-    // Word g holds the strided codes 0..PER_WORD-1 at local positions g%8*PER_WORD + t.
-    const int64_t nwords = nblk*WORDS;
-    for (int64_t g = lane; g < nwords; g += 32) {
-        const int64_t     b   = g >> 3;
-        const int         wi  = (int) (g & (WORDS - 1));
-        const uint8_t   * blk = wr + b*PN_BLOCK_BYTES;
-        const float       d   = __half2float(*(const half *) blk);   // 34*b is even -> 2-byte aligned
-        const uint32_t    v   = pn_ld_word(blk + 2 + 4*wi);
-        const int64_t     p0  = b*QK + (int64_t) wi*PER_WORD;
-#pragma unroll
-        for (int t = 0; t < PER_WORD; ++t) {
-            const int sh = (BITS == 3) ? 3*(t >> 1) : 4*(t >> 1);
-            const int n  = (v >> (sh + ((t & 1) ? 16 : 0))) & MASK;
-            const float wv = d * ((float) n - (float) Z);
-#pragma unroll
-            for (int c = 0; c < NC; ++c) {
-                acc[c] += wv * x[c*k + p0 + t];
-            }
-        }
-    }
-
-#pragma unroll
-    for (int c = 0; c < NC; ++c) {
-#pragma unroll
-        for (int off = 16; off > 0; off >>= 1) {
-            acc[c] += __shfl_down_sync(0xffffffffu, acc[c], off);
-        }
-    }
-
-    if (lane == 0) {
-#pragma unroll
-        for (int c = 0; c < NC; ++c) {
-            dst[c*nrows + row] = acc[c];
-        }
-    }
-}
-
 // T = 1 variant: the activation vector is staged once per CTA into shared memory with coalesced
 // warp-linear loads; each row-warp then reads it from smem instead of re-issuing the strided global
-// loads of pn_gemv_kernel (lane l reads x at stride PER_WORD). Weights, the fp32 w = d*(n - z)
+// loads (lane l reads x at stride PER_WORD). Weights, the fp32 w = d*(n - z)
 // arithmetic and the per-lane accumulation order are unchanged, so the result is bit-identical.
 // Chunks of CH packed blocks are staged with a double buffer; every warp takes the barrier even when
 // its row is out of range, so a partial last CTA cannot desynchronise.
@@ -1010,11 +944,11 @@ bool ggml_cuda_pn_sm60_try(
     ggml_cuda_pn_stat(name, (type == GGML_TYPE_PN3T) ? "pn3t_warp" : "pn4t_warp", m, k, ncols);
 
     constexpr int NWARP = 8;    // warps per CTA on the staged T=1 path
-    const int  nwarp = 8;
-    const dim3 block(32, nwarp);
     const dim3 block1(32, NWARP);
 
-    if (ncols == 1) {
+    // The T=1 GEMV on one activation column, with the kernel chosen by type and shape. ncols 2..4 calls it once
+    // per column, so each column of the checkpoint batch takes the decode's arithmetic.
+    auto gemv_t1 = [&](const float * xc, float * oc) {
         // Rows per warp on the staged T=1 path, measured on the contiguous-row mapping: pn3t is fastest
         // at 4 rows/warp on the plain traversal (1.15-1.18x over 3) and at 3 on the pipelined one,
         // pn4t at 3 (4 rows loses 6-15%). 5 and 6 rows are slower on both types.
@@ -1024,7 +958,7 @@ bool ggml_cuda_pn_sm60_try(
         // for its 16-byte loads, and a 32-bit byte offset per staged piece (the kernel's staging map).
         // Other shapes keep the pipelined and plain smem paths below.
         const int64_t nblk = k / (type == GGML_TYPE_PN3T ? QK_PN3T : QK_PN4T);
-        if (nblk % 8 == 0 && ((((uintptr_t) w) | ((uintptr_t) x)) & 15) == 0 &&
+        if (nblk % 8 == 0 && ((((uintptr_t) w) | ((uintptr_t) xc)) & 15) == 0 &&
             m*nblk*PN_BLOCK_BYTES < ((int64_t) 1 << 32)) {
             if (type == GGML_TYPE_PN3T) {
                 // 3 rows/warp: 17 KB smem and 70 registers per CTA, so three CTAs fit per SM. Same per-row
@@ -1046,22 +980,22 @@ bool ggml_cuda_pn_sm60_try(
                     // float4 slots per thread at 256 threads, not eight. Same quantization, so output is bit-identical.
                     const int nslot = (int) ((k/4 + 32*NWARP - 1)/(32*NWARP));
                     switch (nslot) {
-                        case 1: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 1><<<gridi, block1, smem, stream>>>(w, x, out, k, m); break;
-                        case 2: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 2><<<gridi, block1, smem, stream>>>(w, x, out, k, m); break;
-                        case 3: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 3><<<gridi, block1, smem, stream>>>(w, x, out, k, m); break;
-                        case 4: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 4><<<gridi, block1, smem, stream>>>(w, x, out, k, m); break;
-                        case 5: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 5><<<gridi, block1, smem, stream>>>(w, x, out, k, m); break;
-                        case 6: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 6><<<gridi, block1, smem, stream>>>(w, x, out, k, m); break;
-                        case 7: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 7><<<gridi, block1, smem, stream>>>(w, x, out, k, m); break;
-                        default: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 8><<<gridi, block1, smem, stream>>>(w, x, out, k, m); break;
+                        case 1: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 1><<<gridi, block1, smem, stream>>>(w, xc, oc, k, m); break;
+                        case 2: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 2><<<gridi, block1, smem, stream>>>(w, xc, oc, k, m); break;
+                        case 3: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 3><<<gridi, block1, smem, stream>>>(w, xc, oc, k, m); break;
+                        case 4: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 4><<<gridi, block1, smem, stream>>>(w, xc, oc, k, m); break;
+                        case 5: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 5><<<gridi, block1, smem, stream>>>(w, xc, oc, k, m); break;
+                        case 6: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 6><<<gridi, block1, smem, stream>>>(w, xc, oc, k, m); break;
+                        case 7: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 7><<<gridi, block1, smem, stream>>>(w, xc, oc, k, m); break;
+                        default: pn3t_gemv_wint_kernel<8, WROWS_I, NWARP, 8><<<gridi, block1, smem, stream>>>(w, xc, oc, k, m); break;
                     }
                 } else {
-                    pn_gemv_wpriv_kernel<QK_PN3T, 3, 8, WROWS3, NWARP><<<gridw3, block1, 0, stream>>>(w, x, out, k, m);
+                    pn_gemv_wpriv_kernel<QK_PN3T, 3, 8, WROWS3, NWARP><<<gridw3, block1, 0, stream>>>(w, xc, oc, k, m);
                 }
             } else {
                 constexpr int WROWS = 4;   // rows per warp on the staged path
                 const dim3 gridw((unsigned) ((m + NWARP*WROWS - 1)/(NWARP*WROWS)));
-                pn_gemv_wpriv_kernel<QK_PN4T, 4, 8, WROWS, NWARP><<<gridw, block1, 0, stream>>>(w, x, out, k, m);
+                pn_gemv_wpriv_kernel<QK_PN4T, 4, 8, WROWS, NWARP><<<gridw, block1, 0, stream>>>(w, xc, oc, k, m);
             }
         } else if (type == GGML_TYPE_PN3T) {
             // pn3t takes the software-pipelined traversal: CH=32 (eight word positions per lane per
@@ -1070,28 +1004,16 @@ bool ggml_cuda_pn_sm60_try(
             // (k=5120, m=6144/10240/12288/17408) and 1.4-1.7x on the small-m ones, bit-identical
             // output. pn4t keeps the plain traversal: the same pipelining measured 0.90-1.04x there,
             // i.e. no consistent win.
-            pn_gemv_smem_pf_kernel<QK_PN3T, 3, 32, 3, NWARP><<<grid1, block1, 0, stream>>>(w, x, out, k, m);
+            pn_gemv_smem_pf_kernel<QK_PN3T, 3, 32, 3, NWARP><<<grid1, block1, 0, stream>>>(w, xc, oc, k, m);
         } else {
-            pn_gemv_smem_kernel<QK_PN4T, 4, 16, 3, NWARP><<<grid1, block1, 0, stream>>>(w, x, out, k, m);
+            pn_gemv_smem_kernel<QK_PN4T, 4, 16, 3, NWARP><<<grid1, block1, 0, stream>>>(w, xc, oc, k, m);
         }
         CUDA_CHECK(cudaGetLastError());
-        return true;
-    }
+    };
 
-    const dim3 grid((unsigned) ((m + nwarp - 1)/nwarp));
-    if (type == GGML_TYPE_PN3T) {
-        switch (ncols) {
-            case 2: pn_gemv_kernel<QK_PN3T, 3, 2><<<grid, block, 0, stream>>>(w, x, out, k, m); break;
-            case 3: pn_gemv_kernel<QK_PN3T, 3, 3><<<grid, block, 0, stream>>>(w, x, out, k, m); break;
-            default: pn_gemv_kernel<QK_PN3T, 3, 4><<<grid, block, 0, stream>>>(w, x, out, k, m); break;
-        }
-    } else {
-        switch (ncols) {
-            case 2: pn_gemv_kernel<QK_PN4T, 4, 2><<<grid, block, 0, stream>>>(w, x, out, k, m); break;
-            case 3: pn_gemv_kernel<QK_PN4T, 4, 3><<<grid, block, 0, stream>>>(w, x, out, k, m); break;
-            default: pn_gemv_kernel<QK_PN4T, 4, 4><<<grid, block, 0, stream>>>(w, x, out, k, m); break;
-        }
+    // ncols 2..4 (the server's 4-token checkpoint batch at the end of a prompt): one T=1 GEMV per column.
+    for (int64_t c = 0; c < ncols; ++c) {
+        gemv_t1(x + c*k, out + c*m);
     }
-    CUDA_CHECK(cudaGetLastError());
     return true;
 }

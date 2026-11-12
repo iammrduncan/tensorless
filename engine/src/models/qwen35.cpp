@@ -87,8 +87,16 @@ void llama_model_qwen35::load_arch_tensors(llama_model_loader & ml) {
             layer.ssm_conv1d     = create_tensor(tn(LLM_TENSOR_SSM_CONV1D,     "weight", il), { hparams.ssm_d_conv, conv_dim }, flags);
             layer.ssm_dt         = create_tensor(tn(LLM_TENSOR_SSM_DT,         "bias",   il), { hparams.ssm_dt_rank }, flags);
             layer.ssm_a          = create_tensor(tn(LLM_TENSOR_SSM_A_NOSCAN,             il), { hparams.ssm_dt_rank }, flags);
-            layer.ssm_beta       = create_tensor(tn(LLM_TENSOR_SSM_BETA,       "weight", il), { n_embd, n_v_heads }, flags);
-            layer.ssm_alpha      = create_tensor(tn(LLM_TENSOR_SSM_ALPHA,      "weight", il), { n_embd, n_v_heads }, flags);
+            // ssm_beta and ssm_alpha are views of one [n_embd, 2*n_v_heads] tensor, so T=1 decode runs them as one GEMV
+            // (single device only: a split buffer type would split the views' rows)
+            const ggml_tensor * beta_meta  = ml.get_tensor_meta(tn(LLM_TENSOR_SSM_BETA,  "weight", il).str().c_str());
+            const ggml_tensor * alpha_meta = ml.get_tensor_meta(tn(LLM_TENSOR_SSM_ALPHA, "weight", il).str().c_str());
+            const bool fused_ba = beta_meta != nullptr && alpha_meta != nullptr && beta_meta->type == alpha_meta->type &&
+                    split_mode() == LLAMA_SPLIT_MODE_NONE;
+            const int  ba_flags = fused_ba ? flags | llama_model_loader::TENSOR_SSM_BETA_ALPHA_VIEW : flags;
+            layer.ssm_beta       = create_tensor(tn(LLM_TENSOR_SSM_BETA,       "weight", il), { n_embd, n_v_heads }, ba_flags);
+            layer.ssm_alpha      = create_tensor(tn(LLM_TENSOR_SSM_ALPHA,      "weight", il), { n_embd, n_v_heads }, ba_flags);
+            layer.ssm_beta_alpha_fused = fused_ba && layer.ssm_beta && layer.ssm_alpha ? layer.ssm_beta->view_src : nullptr;
             layer.ssm_norm       = create_tensor(tn(LLM_TENSOR_SSM_NORM,       "weight", il), { head_v_dim }, flags);
             layer.ssm_out        = create_tensor(tn(LLM_TENSOR_SSM_OUT,        "weight", il), { value_dim, n_embd }, flags);
         }
@@ -522,14 +530,35 @@ ggml_tensor * llama_model_qwen35::graph::build_layer_attn_linear(
     ggml_tensor * qkv_mixed = qkvz.first;
     ggml_tensor * z         = qkvz.second;
 
-    ggml_tensor * beta = build_lora_mm(model.layers[il].ssm_beta, cur, model.layers[il].ssm_beta_s);
+    // T=1: one GEMV over the fused [ssm_beta; ssm_alpha] rows; beta and alpha are contiguous views of its output.
+    // build_lora_mm finds the LoRA adapters, the Hadamard rotation and the EXL3 side of a weight by that weight's
+    // tensor, so the fused parent would silently lose them (and the scale tensor is applied per weight): fuse only
+    // when neither weight has any of them, else keep the two separate build_lora_mm calls below.
+    const auto & ba_layer = model.layers[il];
+    const auto has_side_input = [&](ggml_tensor * w) {
+        for (const auto & lora : *loras) {
+            if (lora.first->get_weight(w) != nullptr) {
+                return true;
+            }
+        }
+        return (hadamard_rotations != nullptr && hadamard_rotations->count(w) > 0) ||
+               (model_ref != nullptr && model_ref->exl3_side_of(w) != nullptr);
+    };
+    const bool fused_ba = ba_layer.ssm_beta_alpha_fused != nullptr && n_seq_tokens*n_seqs == 1 &&
+            ba_layer.ssm_beta_s == nullptr && ba_layer.ssm_alpha_s == nullptr &&
+            !has_side_input(ba_layer.ssm_beta) && !has_side_input(ba_layer.ssm_alpha);
+    ggml_tensor * ba    = fused_ba ? build_lora_mm(ba_layer.ssm_beta_alpha_fused, cur) : nullptr;
+
+    ggml_tensor * beta = fused_ba ? ggml_view_2d(ctx0, ba, num_v_heads, 1, num_v_heads*sizeof(float), 0)
+        : build_lora_mm(model.layers[il].ssm_beta, cur, model.layers[il].ssm_beta_s);
     beta = ggml_reshape_4d(ctx0, beta, 1, num_v_heads, n_seq_tokens, n_seqs);
     cb(beta, "beta", il);
 
     beta = ggml_sigmoid(ctx0, beta);
     cb(beta, "beta_sigmoid", il);
 
-    ggml_tensor * alpha = build_lora_mm(model.layers[il].ssm_alpha, cur, model.layers[il].ssm_alpha_s);
+    ggml_tensor * alpha = fused_ba ? ggml_view_2d(ctx0, ba, num_v_heads, 1, num_v_heads*sizeof(float), num_v_heads*sizeof(float))
+        : build_lora_mm(model.layers[il].ssm_alpha, cur, model.layers[il].ssm_alpha_s);
     alpha = ggml_reshape_3d(ctx0, alpha, num_v_heads, n_seq_tokens, n_seqs);
     cb(alpha, "alpha", il);
 

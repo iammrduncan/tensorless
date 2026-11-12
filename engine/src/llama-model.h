@@ -409,6 +409,7 @@ struct llama_layer {
 
     // qwen3.5
     struct ggml_tensor * ssm_alpha = nullptr;
+    struct ggml_tensor * ssm_beta_alpha_fused = nullptr; // [ssm_beta; ssm_alpha] rows, the parent of both views (T=1 decode)
 
     // rwkv
     struct ggml_tensor * time_mix_w1         = nullptr;

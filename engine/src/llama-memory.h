@@ -91,6 +91,15 @@ struct llama_memory_i {
 
     virtual ~llama_memory_i() = default;
 
+    // set by the owning llama_context (see llama_context::decode): an outputless batch that decode holds back is not in
+    // the memory yet, so these run before the memory ops that could see it:
+    //   before_write:   before an op that writes cells (clear, seq_cp, seq_keep, seq_add, seq_div)
+    //   before_seq_rm:  before seq_rm(seq_id, p0, ...), which only matters when the held batch has cells at or after p0
+    //   held_pos:       widens the [pos_min, pos_max] that seq_pos_min/max report for seq_id
+    std::function<void()> before_write;
+    std::function<void(llama_seq_id, llama_pos)> before_seq_rm;
+    std::function<void(llama_seq_id, llama_pos &, llama_pos &)> held_pos;
+
     // split the input batch into a set of ubatches and verify that they can fit into the cache
     // return a context object containing the ubatches and memory state required to process them
     // check the llama_memory_context_i::get_status() for the result

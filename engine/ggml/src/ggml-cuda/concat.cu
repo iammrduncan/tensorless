@@ -380,6 +380,85 @@ bool ggml_cuda_concat_can_fuse_gather(const ggml_tensor * concat, const ggml_ten
            (size_t) concat->src[0]->nb[0] == sizeof(float) && gr->data != nullptr;
 }
 
+// Dim-0 concat whose src1 is transposed (the GDN conv input: src1 has nb[1] == sizeof(T)). The per-element path
+// reads src1 with a stride of nb10 across a warp. Here a 32x32 tile of src1 is read along its contiguous dim 1 and
+// written to dst along dim 0, so both sides are coalesced. Each element is copied once, so the output is bit-identical.
+#define CUDA_CONCAT_TILE 32
+
+// src0 part of each row: dst[i0, i1, i2, i3] = src0[i0, i1, i2, i3] for i0 < ne00.
+template <typename T>
+static __global__ void concat_tr_src0(const char * __restrict__ src0, char * __restrict__ dst,
+                                      const int64_t ne00, const int64_t ne1, const int64_t ne2, const int64_t ne3,
+                                      const int64_t nb00, const int64_t nb01, const int64_t nb02, const int64_t nb03,
+                                      const int64_t nb0,  const int64_t nb1,  const int64_t nb2,  const int64_t nb3) {
+    const int64_t n = ne00 * ne1 * ne2 * ne3;
+    for (int64_t idx = (int64_t) blockIdx.x * blockDim.x + threadIdx.x; idx < n; idx += (int64_t) blockDim.x * gridDim.x) {
+        int64_t r = idx;
+        const int64_t i0 = r % ne00; r /= ne00;
+        const int64_t i1 = r % ne1;  r /= ne1;
+        const int64_t i2 = r % ne2;  r /= ne2;
+        const int64_t i3 = r;
+        *(T *) (dst + i0*nb0 + i1*nb1 + i2*nb2 + i3*nb3) = *(const T *) (src0 + i0*nb00 + i1*nb01 + i2*nb02 + i3*nb03);
+    }
+}
+
+// src1 part: dst[ne00 + j, i1, i2, i3] = src1[j, i1, i2, i3] for j < ne10. Grid (tiles of j, tiles of i1, ne2*ne3).
+template <typename T>
+static __global__ void __launch_bounds__(CUDA_CONCAT_TILE * 8)
+    concat_tr_tile(const char * __restrict__ src1, char * __restrict__ dst,
+                   const int64_t ne00, const int64_t ne10, const int64_t ne1, const int64_t ne2,
+                   const int64_t nb10, const int64_t nb11, const int64_t nb12, const int64_t nb13,
+                   const int64_t nb0,  const int64_t nb1,  const int64_t nb2,  const int64_t nb3) {
+    __shared__ T tile[CUDA_CONCAT_TILE][CUDA_CONCAT_TILE + 1];
+
+    const int64_t i2 = blockIdx.z % ne2;
+    const int64_t i3 = blockIdx.z / ne2;
+    const int tx = threadIdx.x;  // lanes run along dim 1 (contiguous in src1)
+    const int ty = threadIdx.y;
+
+#pragma unroll
+    for (int r = 0; r < CUDA_CONCAT_TILE; r += 8) {
+        const int64_t j  = (int64_t) blockIdx.x * CUDA_CONCAT_TILE + ty + r;
+        const int64_t i1 = (int64_t) blockIdx.y * CUDA_CONCAT_TILE + tx;
+        if (j < ne10 && i1 < ne1) {
+            tile[ty + r][tx] = *(const T *) (src1 + j*nb10 + i1*nb11 + i2*nb12 + i3*nb13);
+        }
+    }
+    __syncthreads();
+
+#pragma unroll
+    for (int r = 0; r < CUDA_CONCAT_TILE; r += 8) {
+        const int64_t j  = (int64_t) blockIdx.x * CUDA_CONCAT_TILE + tx;
+        const int64_t i1 = (int64_t) blockIdx.y * CUDA_CONCAT_TILE + ty + r;
+        if (j < ne10 && i1 < ne1) {
+            *(T *) (dst + (ne00 + j)*nb0 + i1*nb1 + i2*nb2 + i3*nb3) = tile[tx][ty + r];
+        }
+    }
+}
+
+template <typename T>
+static void concat_tr_tile_cuda(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, cudaStream_t stream) {
+    const int64_t ne00 = src0->ne[0], ne1 = dst->ne[1], ne2 = dst->ne[2], ne3 = dst->ne[3];
+    const int64_t ne10 = src1->ne[0];
+
+    const int64_t n0 = ne00 * ne1 * ne2 * ne3;
+    if (n0 > 0) {
+        const int64_t nb_want = (n0 + CUDA_CONCAT_BLOCK_SIZE - 1) / CUDA_CONCAT_BLOCK_SIZE;
+        const int     nblk    = (int) (nb_want < 65535 ? nb_want : 65535);
+        concat_tr_src0<T><<<nblk, CUDA_CONCAT_BLOCK_SIZE, 0, stream>>>(
+            (const char *) src0->data, (char *) dst->data, ne00, ne1, ne2, ne3,
+            src0->nb[0], src0->nb[1], src0->nb[2], src0->nb[3],
+            dst->nb[0], dst->nb[1], dst->nb[2], dst->nb[3]);
+    }
+
+    const dim3 grid((ne10 + CUDA_CONCAT_TILE - 1) / CUDA_CONCAT_TILE, (ne1 + CUDA_CONCAT_TILE - 1) / CUDA_CONCAT_TILE, ne2 * ne3);
+    const dim3 block(CUDA_CONCAT_TILE, 8);
+    concat_tr_tile<T><<<grid, block, 0, stream>>>(
+        (const char *) src1->data, (char *) dst->data, ne00, ne10, ne1, ne2,
+        src1->nb[0], src1->nb[1], src1->nb[2], src1->nb[3],
+        dst->nb[0], dst->nb[1], dst->nb[2], dst->nb[3]);
+}
+
 template <typename T>
 static void concat_cuda(const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, int dim, cudaStream_t stream,
                         const ggml_cuda_concat_gather * gather = nullptr) {
@@ -390,6 +469,12 @@ static void concat_cuda(const ggml_tensor * src0, const ggml_tensor * src1, ggml
     // unexecuted and corrupt the result. ggml_cuda_concat_can_fuse_gather already decided this,
     // so reaching here is a bug.
     GGML_ASSERT(gather == nullptr);
+
+    if (dim == 0 && sizeof(T) == sizeof(float) && src1->nb[1] == sizeof(T) && src1->nb[0] != sizeof(T) &&
+        dst->nb[0] == sizeof(T)) {
+        concat_tr_tile_cuda<T>(src0, src1, dst, stream);
+        return;
+    }
 
     if (dim != 3 && ggml_is_contiguous_to_3(src0) && ggml_is_contiguous_to_3(src1)) {
         const T * src0_d = (const T *) src0->data;

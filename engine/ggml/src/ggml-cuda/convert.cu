@@ -1,5 +1,6 @@
 #include "convert.cuh"
 #include "dequantize.cuh"
+#include "pn-gemm-sm60.cuh"
 #include "turbo-quant.cuh"
 
 #include <cstdint>
@@ -1128,12 +1129,139 @@ to_fp16_cuda_t ggml_get_to_fp16_cuda(ggml_type type) {
     }
 }
 
+// PN to fp32, vectorized: one 16-byte store is four consecutive weights, and each thread writes one such slot. A block
+// of 80 (pn3t) or 64 (pn4t) weights is 20 or 16 consecutive slots, so a warp's stores are contiguous in memory (the
+// earlier layout wrote slot pairs p and p + slots/2 from one thread, a warp's stores then covered gaps). Every weight is
+// the same d * (code - zero) as dequantize_pn3t / dequantize_pn4t, so the output is bit-identical to the generic path.
+// The block starts 2-byte aligned (34 bytes), so each word is two 16-bit loads.
+static __device__ __forceinline__ uint32_t pn_ld_word2(const uint8_t * qs, int w) {
+    const uint16_t * p = (const uint16_t *) (qs + 4*w);
+    return (uint32_t) p[0] | ((uint32_t) p[1] << 16);
+}
+
+static __device__ __forceinline__ float4 pn3t_dequant4(const block_pn3t * x, const int s) {
+    const float d = __half2float(x->d);
+    // weights 4s..4s+3 are code pairs j = 2s, 2s+1: word j/5, 3-bit fields, the odd weight of a pair in the high half
+    const int j0 = 2*s;
+    const int j1 = 2*s + 1;
+    const uint32_t w0 = pn_ld_word2(x->qs, j0 / 5);
+    const uint32_t w1 = pn_ld_word2(x->qs, j1 / 5);
+    const int b0 = 3 * (j0 % 5);
+    const int b1 = 3 * (j1 % 5);
+    return make_float4(
+        d * ((float)((w0 >>        b0) & 0x7) - 4.0f),
+        d * ((float)((w0 >> (16 + b0)) & 0x7) - 4.0f),
+        d * ((float)((w1 >>        b1) & 0x7) - 4.0f),
+        d * ((float)((w1 >> (16 + b1)) & 0x7) - 4.0f));
+}
+
+static __device__ __forceinline__ float4 pn4t_dequant4(const block_pn4t * x, const int s) {
+    const float d = __half2float(x->d);
+    // weights 4s..4s+3 are code pairs j = 2s, 2s+1: word j/4, 4-bit fields, the odd weight of a pair in the high half
+    const int j0 = 2*s;
+    const int j1 = 2*s + 1;
+    const uint32_t w0 = pn_ld_word2(x->qs, j0 / 4);
+    const uint32_t w1 = pn_ld_word2(x->qs, j1 / 4);
+    const int b0 = 4 * (j0 % 4);
+    const int b1 = 4 * (j1 % 4);
+    return make_float4(
+        d * ((float)((w0 >>        b0) & 0xF) - 8.0f),
+        d * ((float)((w0 >> (16 + b0)) & 0xF) - 8.0f),
+        d * ((float)((w1 >>        b1) & 0xF) - 8.0f),
+        d * ((float)((w1 >> (16 + b1)) & 0xF) - 8.0f));
+}
+
+template <int qk>
+static __global__ void dequantize_pn_f32_vec4(const void * __restrict__ vx, float4 * __restrict__ y, const uint32_t nslot) {
+    const uint32_t g = blockIdx.x * blockDim.x + threadIdx.x;
+    if (g >= nslot) {
+        return;
+    }
+    constexpr uint32_t slots = qk / 4;    // 16-byte stores per block
+    const uint32_t ib = g / slots;
+    const uint32_t s  = g % slots;
+    if constexpr (qk == QK_PN3T) {
+        y[g] = pn3t_dequant4((const block_pn3t *) vx + ib, s);
+    } else {
+        static_assert(qk == QK_PN4T, "unexpected PN block size");
+        y[g] = pn4t_dequant4((const block_pn4t *) vx + ib, s);
+    }
+}
+
+template <int qk>
+static void dequantize_pn_f32_vec4_cuda(const void * vx, float * y, const int64_t k, cudaStream_t stream) {
+    GGML_ASSERT(k % qk == 0);
+    GGML_ASSERT(k/4 <= UINT32_MAX);
+    GGML_ASSERT(((uintptr_t) y & 15) == 0);
+    const uint32_t nslot   = (uint32_t) (k/4);
+    const uint32_t nblocks = (nslot + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE;
+    dequantize_pn_f32_vec4<qk><<<nblocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, (float4 *) y, nslot);
+}
+
+// PN to fp16 for the depth-gated h2 GEMM (ggml_cuda_pn_h2_sm60_f16): the same slots as the fp32 kernel above, each
+// weight rounded once with round-to-nearest, which is the rounding that GEMM applied when it staged fp32 weights.
+// The GEMM therefore reads the same half values from half the bytes, and the side stream writes half as many.
+static __device__ __forceinline__ uint2 pn_pack_f16x4(const float4 v) {
+    const __half2 lo = __floats2half2_rn(v.x, v.y);
+    const __half2 hi = __floats2half2_rn(v.z, v.w);
+    return make_uint2(*reinterpret_cast<const uint32_t *>(&lo), *reinterpret_cast<const uint32_t *>(&hi));
+}
+
+// One thread writes 8 consecutive halves (slots 2p and 2p+1 of its block) as one 16-byte store: a warp's stores cover
+// 512 contiguous bytes instead of two 256-byte runs. The values and the positions are those of the two-store layout.
+template <int qk>
+static __global__ void dequantize_pn_f16_vec8(const void * __restrict__ vx, uint4 * __restrict__ y, const uint32_t n8) {
+    const uint32_t g = blockIdx.x * blockDim.x + threadIdx.x;
+    if (g >= n8) {
+        return;
+    }
+    constexpr uint32_t hslots = qk / 8;    // 16-byte stores per block
+    const uint32_t ib = g / hslots;
+    const uint32_t p  = g % hslots;
+    uint4 * out = y + (size_t) ib * hslots;
+    if constexpr (qk == QK_PN3T) {
+        const block_pn3t * x = (const block_pn3t *) vx + ib;
+        const uint2 lo = pn_pack_f16x4(pn3t_dequant4(x, 2*p));
+        const uint2 hi = pn_pack_f16x4(pn3t_dequant4(x, 2*p + 1));
+        out[p] = make_uint4(lo.x, lo.y, hi.x, hi.y);
+    } else {
+        static_assert(qk == QK_PN4T, "unexpected PN block size");
+        const block_pn4t * x = (const block_pn4t *) vx + ib;
+        const uint2 lo = pn_pack_f16x4(pn4t_dequant4(x, 2*p));
+        const uint2 hi = pn_pack_f16x4(pn4t_dequant4(x, 2*p + 1));
+        out[p] = make_uint4(lo.x, lo.y, hi.x, hi.y);
+    }
+}
+
+template <int qk>
+static void dequantize_pn_f16_vec8_cuda(const void * vx, half * y, const int64_t k, cudaStream_t stream) {
+    GGML_ASSERT(k % qk == 0);
+    GGML_ASSERT(k/8 <= UINT32_MAX);
+    GGML_ASSERT(((uintptr_t) y & 15) == 0);
+    const uint32_t n8     = (uint32_t) (k/8);
+    const uint32_t nblocks = (n8 + CUDA_DEQUANTIZE_BLOCK_SIZE - 1) / CUDA_DEQUANTIZE_BLOCK_SIZE;
+    dequantize_pn_f16_vec8<qk><<<nblocks, CUDA_DEQUANTIZE_BLOCK_SIZE, 0, stream>>>(vx, (uint4 *) y, n8);
+}
+
+void ggml_cuda_pn_to_fp16(ggml_type type, const void * x, half * y, int64_t k, cudaStream_t stream) {
+    switch (type) {
+        case GGML_TYPE_PN3T:
+            dequantize_pn_f16_vec8_cuda<QK_PN3T>(x, y, k, stream);
+            break;
+        case GGML_TYPE_PN4T:
+            dequantize_pn_f16_vec8_cuda<QK_PN4T>(x, y, k, stream);
+            break;
+        default:
+            GGML_ABORT("ggml_cuda_pn_to_fp16: unsupported type %s", ggml_type_name(type));
+    }
+}
+
 to_fp32_cuda_t ggml_get_to_fp32_cuda(ggml_type type) {
     switch (type) {
         case GGML_TYPE_PN3T:
-            return dequantize_block_cont_cuda<QK_PN3T, QR_PN3T, dequantize_pn3t>;
+            return dequantize_pn_f32_vec4_cuda<QK_PN3T>;
         case GGML_TYPE_PN4T:
-            return dequantize_block_cont_cuda<QK_PN4T, QR_PN4T, dequantize_pn4t>;
+            return dequantize_pn_f32_vec4_cuda<QK_PN4T>;
         case GGML_TYPE_Q1_0:
             return dequantize_block_cont_cuda<QK1_0, QR1_0, dequantize_q1_0>;
         case GGML_TYPE_Q2_0:

@@ -266,8 +266,8 @@ gated_delta_net_cuda(const float * q,
 
 // same per-column math as gated_delta_net_cuda, but each warp owns NC state columns so the
 // NC reduction chains interleave; multi-token, scalar-gate, S_v == 128 only (GGML_CUDA_SM86_GDN_COLS)
-template <int S_v, bool keep_rs_t, int NC, bool PREFETCH>
-__global__ void __launch_bounds__((ggml_cuda_get_physical_warp_size() < S_v ? ggml_cuda_get_physical_warp_size() : S_v) * 4, 2)
+template <int S_v, bool keep_rs_t, int NC, bool PREFETCH, int NUM_WARPS>
+__global__ void __launch_bounds__((ggml_cuda_get_physical_warp_size() < S_v ? ggml_cuda_get_physical_warp_size() : S_v) * NUM_WARPS, 2)
 gated_delta_net_cuda_ilp(const float * q,
                          const float * k,
                          const float * v,
@@ -504,7 +504,8 @@ static void launch_gated_delta_net_ilp_inst(
         float scale, int64_t state_slot_stride, int K, cudaStream_t stream) {
     constexpr int S_v = 128;
     const int warp_size = ggml_cuda_info().devices[ggml_cuda_get_device()].warp_size;
-    const int num_warps = 4;
+    // NC=8 uses 2-warp CTAs: grid z = 8 gives 384 CTAs instead of 192 four-warp CTAs. Each warp keeps its NC columns.
+    constexpr int num_warps = NC == 8 ? 2 : 4;
     GGML_ASSERT(S_v % (num_warps * NC) == 0);
     dim3 grid_dims(H, n_seqs, S_v / (num_warps * NC));
     dim3 block_dims(warp_size <= S_v ? warp_size : S_v, num_warps, 1);
@@ -513,7 +514,7 @@ static void launch_gated_delta_net_ilp_inst(
     const uint3 rq3_magic   = init_fastdiv_values(rq3);
 
     const ggml_cuda_kernel_launch_params launch_params = ggml_cuda_kernel_launch_params(grid_dims, block_dims, 0, stream);
-    ggml_cuda_kernel_launch(gated_delta_net_cuda_ilp<S_v, keep_rs_t, NC, PREFETCH>, launch_params,
+    ggml_cuda_kernel_launch(gated_delta_net_cuda_ilp<S_v, keep_rs_t, NC, PREFETCH, num_warps>, launch_params,
         q_d, k_d, v_d, g_d, b_d, s_d, dst_d, state_d, H,
         n_tokens, n_seqs, sq1, sq2, sq3, sv1, sv2, sv3,
         sb1, sb2, sb3, neqk1_magic, rq3_magic, s_base, s_rows, s_row_stride, s_gather_dst, scale, state_slot_stride, K);

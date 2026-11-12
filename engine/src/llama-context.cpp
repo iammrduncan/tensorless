@@ -529,6 +529,22 @@ llama_context::llama_context(
         };
 
         memory.reset(model.create_memory(params_mem, cparams));
+
+        // an outputless batch held by decode is not in the memory yet (see decode): flush it before the ops that could see it
+        memory->before_write = [this]() { flush_pend(); };
+        memory->before_seq_rm = [this](llama_seq_id seq_id, llama_pos p0) {
+            if (pend_touches(seq_id, p0)) {
+                flush_pend();
+            }
+        };
+        memory->held_pos = [this](llama_seq_id seq_id, llama_pos & p_min, llama_pos & p_max) {
+            const auto [h_min, h_max] = pend_pos_range(seq_id);
+            if (h_max < 0) {
+                return;
+            }
+            p_min = p_min < 0 ? h_min : std::min(p_min, h_min);
+            p_max = std::max(p_max, h_max);
+        };
     }
 
     // init backends
@@ -1108,7 +1124,9 @@ void llama_context::sched_reserve() {
                 gf = graph_reserve(n_tokens, 1,      n_outputs_pp, mctx.get(), model.hparams.no_alloc);
                 break;
             default:
-                gf = graph_reserve(n_tokens, n_seqs, n_outputs_pp, mctx.get(), model.hparams.no_alloc);
+                // a held pair of outputless ubatches runs as one 2*n_ubatch graph (see decode): reserve for it so the
+                // first merged ubatch of a request does not grow the compute buffers inside the timed prefill
+                gf = graph_reserve(std::min(2 * n_tokens, cparams.n_ctx), n_seqs, n_outputs_pp, mctx.get(), model.hparams.no_alloc);
         };
 
         if (!gf) {
@@ -1313,6 +1331,8 @@ enum ggml_type llama_context::get_kv_type_v() const {
 }
 
 bool llama_context::memory_update(bool optimize) {
+    flush_pend();
+
     if (!memory) {
         return false;
     }
@@ -1964,6 +1984,10 @@ llm_graph_result * llama_context::process_ubatch(const llama_ubatch & ubatch, ll
 }
 
 int llama_context::encode(const llama_batch & batch_inp) {
+    if (const int ret = flush_pend(); ret != 0) {
+        return ret;
+    }
+
     // MTP hook batches carry both token (next-token id) and embd (h_nextn row),
     // so accept either present rather than requiring exactly one.
     GGML_ASSERT(batch_inp.token || batch_inp.embd);
@@ -2272,7 +2296,156 @@ static bool needs_raw_logits(const llama_ubatch & ubatch, const std::map<llama_s
     return false; // all sequences use backend sampling
 }
 
+bool llama_context::pairable(const llama_batch & batch_inp) const {
+    if (!batch_inp.token || batch_inp.embd || !batch_inp.logits || !batch_inp.pos || !batch_inp.seq_id || !batch_inp.n_seq_id) {
+        return false;
+    }
+
+    // batches of 1-4 tokens stay alone: merged with a 512 they would add a 128-column tile
+    if (batch_inp.n_tokens <= 4 || (uint32_t) batch_inp.n_tokens > cparams.n_ubatch) {
+        return false;
+    }
+
+    if (cparams.embeddings || cparams.embeddings_nextn || cparams.pipeline_parallel || cparams.ctx_type != LLAMA_CONTEXT_TYPE_DEFAULT) {
+        return false;
+    }
+
+    if (!sampling.samplers.empty()) {
+        return false;
+    }
+
+    for (int32_t i = 0; i < batch_inp.n_tokens; ++i) {
+        if (batch_inp.logits[i] != 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void llama_context::pend_add(const llama_batch & batch_inp) {
+    for (int32_t i = 0; i < batch_inp.n_tokens; ++i) {
+        pend.tok.push_back(batch_inp.token[i]);
+        pend.pos.push_back(batch_inp.pos[i]);
+        pend.n_seq.push_back(batch_inp.n_seq_id[i]);
+        pend.logits.push_back(0);
+
+        for (int32_t s = 0; s < batch_inp.n_seq_id[i]; ++s) {
+            pend.seq.push_back(batch_inp.seq_id[i][s]);
+        }
+    }
+
+    pend.n += batch_inp.n_tokens;
+}
+
+int llama_context::pend_run(uint32_t n_ubatch_max) {
+    // take the run out first, so that the decode below does not see it as pending
+    pending_batch p = std::move(pend);
+    pend = pending_batch{};
+
+    std::vector<llama_seq_id *> seq_ptr(p.n);
+
+    size_t k = 0;
+    for (int32_t i = 0; i < p.n; ++i) {
+        seq_ptr[i] = &p.seq[k];
+        k += p.n_seq[i];
+    }
+
+    llama_batch b = {};
+    b.n_tokens = p.n;
+    b.token    = p.tok.data();
+    b.pos      = p.pos.data();
+    b.n_seq_id = p.n_seq.data();
+    b.seq_id   = seq_ptr.data();
+    b.logits   = p.logits.data();
+
+    if ((uint32_t) p.n > cparams.n_ubatch) {
+        n_pairs++;
+        LLAMA_LOG_INFO("%s: pair %lld: one ubatch of %d tokens\n", __func__, (long long) n_pairs, p.n);
+    }
+
+    return decode_core(b, n_ubatch_max);
+}
+
+int llama_context::flush_pend() {
+    if (pend.n == 0) {
+        return 0;
+    }
+
+    return pend_run(cparams.n_ubatch);
+}
+
+std::pair<llama_pos, llama_pos> llama_context::pend_pos_range(llama_seq_id seq_id) const {
+    llama_pos p_min = -1;
+    llama_pos p_max = -1;
+
+    size_t k = 0;
+    for (int32_t i = 0; i < pend.n; ++i) {
+        for (int32_t s = 0; s < pend.n_seq[i]; ++s, ++k) {
+            if (pend.seq[k] != seq_id) {
+                continue;
+            }
+
+            p_min = p_min < 0 ? pend.pos[i] : std::min(p_min, pend.pos[i]);
+            p_max = std::max(p_max, pend.pos[i]);
+        }
+    }
+
+    return { p_min, p_max };
+}
+
+bool llama_context::pend_touches(llama_seq_id seq_id, llama_pos p0) const {
+    if (pend.n == 0) {
+        return false;
+    }
+
+    if (seq_id < 0) {
+        return true;
+    }
+
+    const llama_pos p_max = pend_pos_range(seq_id).second;
+
+    return p_max >= 0 && p_max >= p0;
+}
+
 int llama_context::decode(const llama_batch & batch_inp) {
+    if (memory && pairable(batch_inp)) {
+        // the second batch of a pair: one ubatch of both, computed now
+        if (pend.n > 0 && pend.n + batch_inp.n_tokens <= 2 * (int32_t) cparams.n_ubatch) {
+            pend_add(batch_inp);
+
+            return pend_run(2 * cparams.n_ubatch);
+        }
+
+        // the first batch of a pair: hold it, without applying it to the memory
+        if (const int ret = flush_pend(); ret != 0) {
+            return ret;
+        }
+
+        pend_add(batch_inp);
+
+        return 0;
+    }
+
+    if (const int ret = flush_pend(); ret != 0) {
+        return ret;
+    }
+
+    return decode_core(batch_inp, cparams.n_ubatch);
+}
+
+// The PN precision tier's position rule reads the ubatch each graph computes. The CUDA backend exports its setter by name;
+// the other backends do not, so this reaches only the backends that have it.
+static void llama_pn_tier_set_ubatch(llama_pos pos0, bool is_last) {
+    for (size_t i = 0; i < ggml_backend_reg_count(); ++i) {
+        auto * set_ubatch_fn = (void (*)(int64_t, bool)) ggml_backend_reg_get_proc_address(ggml_backend_reg_get(i), "ggml_backend_cuda_pn_h2_set_ubatch");
+        if (set_ubatch_fn) {
+            set_ubatch_fn(pos0, is_last);
+        }
+    }
+}
+
+int llama_context::decode_core(const llama_batch & batch_inp, uint32_t n_ubatch_max) {
     // MTP hook batches carry both token (next-token id) and embd (h_nextn row),
     // so accept either present rather than requiring exactly one.
     GGML_ASSERT(batch_inp.token || batch_inp.embd);
@@ -2352,7 +2525,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
         }
     }
 
-    GGML_ASSERT(n_tokens_all <= cparams.n_batch);
+    GGML_ASSERT(n_tokens_all <= std::max(cparams.n_batch, n_ubatch_max));
 
     GGML_ASSERT((cparams.causal_attn || cparams.n_ubatch >= n_tokens_all) && "non-causal attention requires n_ubatch >= n_tokens");
 
@@ -2380,7 +2553,7 @@ int llama_context::decode(const llama_batch & batch_inp) {
     llama_memory_context_ptr mctx;
 
     while (true) {
-        mctx = memory->init_batch(*balloc, cparams.n_ubatch, output_all);
+        mctx = memory->init_batch(*balloc, n_ubatch_max, output_all);
         if (!mctx) {
             return -2;
         }
@@ -2456,6 +2629,11 @@ int llama_context::decode(const llama_batch & batch_inp) {
         }
 
         ggml_status status;
+
+        // the PN precision tier's position rule: the prompt's final ubatch is the one that holds the batch's last token, when
+        // that token has an output
+        const bool ubatch_is_last = n_tokens_prev + (int64_t) ubatch.n_tokens == n_tokens_all && ubatch.output[ubatch.n_tokens - 1];
+        llama_pn_tier_set_ubatch(ubatch.pos[0], ubatch_is_last);
 
         const auto * res = process_ubatch(ubatch, ctx_type_to_graph_type(cparams.ctx_type), mctx.get(), status);
 
@@ -3770,6 +3948,8 @@ private:
 };
 
 size_t llama_context::state_get_size() {
+    flush_pend();
+
     llama_io_write_dummy io(false);
     try {
         return state_write_data(io);
@@ -3780,6 +3960,8 @@ size_t llama_context::state_get_size() {
 }
 
 size_t llama_context::state_get_data(uint8_t * dst, size_t size) {
+    flush_pend();
+
     llama_io_write_host io(dst, size);
     try {
         return state_write_data(io);
@@ -3790,6 +3972,8 @@ size_t llama_context::state_get_data(uint8_t * dst, size_t size) {
 }
 
 size_t llama_context::state_set_data(const uint8_t * src, size_t size) {
+    flush_pend();
+
     llama_io_read_host io(src, size);
     try {
         return state_read_data(io);
@@ -3802,6 +3986,8 @@ size_t llama_context::state_set_data(const uint8_t * src, size_t size) {
 static constexpr uint32_t io_magic = 0xaf143cd8;
 
 size_t llama_context::state_seq_get_size(llama_seq_id seq_id, llama_state_seq_flags flags) {
+    flush_pend();
+
     llama_io_write_dummy io(flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE);
     try {
         io.write(&io_magic, sizeof(io_magic));
@@ -3815,6 +4001,8 @@ size_t llama_context::state_seq_get_size(llama_seq_id seq_id, llama_state_seq_fl
 }
 
 size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, size_t size, llama_state_seq_flags flags) {
+    flush_pend();
+
     std::unique_ptr<llama_io_write_i> io;
     if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
         io = std::make_unique<llama_io_write_device>(dst, size, mem_storage[seq_id]);
@@ -3834,6 +4022,8 @@ size_t llama_context::state_seq_get_data(llama_seq_id seq_id, uint8_t * dst, siz
 }
 
 size_t llama_context::state_seq_set_data(llama_seq_id seq_id, const uint8_t * src, size_t size, llama_state_seq_flags flags) {
+    flush_pend();
+
     std::unique_ptr<llama_io_read_i> io;
     if (flags & LLAMA_STATE_SEQ_FLAGS_ON_DEVICE) {
         // create a temporary io to read the magic and the src seq_id
@@ -3933,6 +4123,8 @@ bool llama_context::state_save_file(const char * filepath, const llama_token * t
 }
 
 size_t llama_context::state_seq_load_file(llama_seq_id seq_id, const char * filepath, llama_token * tokens_out, size_t n_token_capacity, size_t * n_token_count_out) {
+    flush_pend();
+
     llama_file file(filepath, "rb");
 
     // version checks
@@ -3987,6 +4179,8 @@ size_t llama_context::state_seq_load_file(llama_seq_id seq_id, const char * file
 }
 
 size_t llama_context::state_seq_save_file(llama_seq_id seq_id, const char * filepath, const llama_token * tokens, size_t n_token_count) {
+    flush_pend();
+
     llama_file file(filepath, "wb");
 
     file.write_u32(LLAMA_STATE_SEQ_MAGIC);
@@ -4007,6 +4201,8 @@ size_t llama_context::state_seq_save_file(llama_seq_id seq_id, const char * file
 }
 
 size_t llama_context::state_write_data(llama_io_write_i & io) {
+    flush_pend();
+
     LLAMA_LOG_DEBUG("%s: writing state\n", __func__);
 
     // write model info
@@ -4027,6 +4223,8 @@ size_t llama_context::state_write_data(llama_io_write_i & io) {
 }
 
 size_t llama_context::state_read_data(llama_io_read_i & io) {
+    flush_pend();
+
     LLAMA_LOG_DEBUG("%s: reading state\n", __func__);
 
     // read model info
@@ -4053,6 +4251,8 @@ size_t llama_context::state_read_data(llama_io_read_i & io) {
 }
 
 size_t llama_context::state_seq_write_data(llama_io_write_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    flush_pend();
+
     if (memory) {
         memory->state_write(io, seq_id, flags);
     }
@@ -4061,6 +4261,8 @@ size_t llama_context::state_seq_write_data(llama_io_write_i & io, llama_seq_id s
 }
 
 size_t llama_context::state_seq_read_data(llama_io_read_i & io, llama_seq_id seq_id, llama_state_seq_flags flags) {
+    flush_pend();
+
     if (memory) {
         memory->state_read(io, seq_id, flags);
     }
@@ -4834,10 +5036,19 @@ int32_t llama_set_adapter_cvec(
 // memory
 //
 
+// a held outputless batch is applied and computed before an op that writes cells (see llama_context::decode)
+static void llama_memory_before_write(llama_memory_t mem) {
+    if (mem->before_write) {
+        mem->before_write();
+    }
+}
+
 void llama_memory_clear(llama_memory_t mem, bool data) {
     if (!mem) {
         return;
     }
+
+    llama_memory_before_write(mem);
 
     mem->clear(data);
 }
@@ -4849,6 +5060,11 @@ bool llama_memory_seq_rm(
              llama_pos p1) {
     if (!mem) {
         return true;
+    }
+
+    // a removal that reaches no held position changes nothing held: the held batch stays held
+    if (mem->before_seq_rm) {
+        mem->before_seq_rm(seq_id, p0);
     }
 
     return mem->seq_rm(seq_id, p0, p1);
@@ -4864,6 +5080,8 @@ void llama_memory_seq_cp(
         return;
     }
 
+    llama_memory_before_write(mem);
+
     mem->seq_cp(seq_id_src, seq_id_dst, p0, p1);
 }
 
@@ -4873,6 +5091,8 @@ void llama_memory_seq_keep(
     if (!mem) {
         return;
     }
+
+    llama_memory_before_write(mem);
 
     mem->seq_keep(seq_id);
 }
@@ -4887,6 +5107,8 @@ void llama_memory_seq_add(
         return;
     }
 
+    llama_memory_before_write(mem);
+
     mem->seq_add(seq_id, p0, p1, delta);
 }
 
@@ -4900,6 +5122,8 @@ void llama_memory_seq_div(
         return;
     }
 
+    llama_memory_before_write(mem);
+
     mem->seq_div(seq_id, p0, p1, d);
 }
 
@@ -4910,7 +5134,14 @@ llama_pos llama_memory_seq_pos_min(
         return -1;
     }
 
-    return mem->seq_pos_min(seq_id);
+    llama_pos p_min = mem->seq_pos_min(seq_id);
+    llama_pos p_max = mem->seq_pos_max(seq_id);
+
+    if (mem->held_pos) {
+        mem->held_pos(seq_id, p_min, p_max);
+    }
+
+    return p_min;
 }
 
 llama_pos llama_memory_seq_pos_max(
@@ -4920,7 +5151,14 @@ llama_pos llama_memory_seq_pos_max(
         return -1;
     }
 
-    return mem->seq_pos_max(seq_id);
+    llama_pos p_min = mem->seq_pos_min(seq_id);
+    llama_pos p_max = mem->seq_pos_max(seq_id);
+
+    if (mem->held_pos) {
+        mem->held_pos(seq_id, p_min, p_max);
+    }
+
+    return p_max;
 }
 
 bool llama_memory_can_shift(llama_memory_t mem) {

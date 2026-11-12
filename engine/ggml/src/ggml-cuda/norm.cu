@@ -728,6 +728,60 @@ static __global__ void rms_norm_f32_gate(const float * x, const float * w, const
     }
 }
 
+// rms_norm_f32_gate for ncols == 128 with two rows per 256-thread block: threads 0..127 take row 2*blockIdx.x and
+// threads 128..255 take row 2*blockIdx.x + 1, one column per thread. Each half reduces its own row. Its four warps
+// hold the same columns as warps 0..3 of rms_norm_f32_gate<256>, and that kernel's second stage adds warps 4..7,
+// which are +0.0f here, so the row total is (w0 + w2) + (w1 + w3) in both: the bits are unchanged.
+static __global__ void rms_norm_f32_gate_pair128(const float * x, const float * w, const float * gate, float * dst,
+                                                 const int nrows, const int64_t stride_row, const int64_t stride_channel,
+                                                 const int64_t stride_sample, const float eps) {
+    ggml_cuda_pdl_lc();
+    const int nchannels = gridDim.y;
+
+    const int channel = blockIdx.y;
+    const int sample  = blockIdx.z;
+    const int half    = threadIdx.x / 128;
+    const int tid     = threadIdx.x % 128;
+    const int row     = 2*blockIdx.x + half;
+    const bool active = row < nrows;
+
+    if (active) {
+        x += sample*stride_sample + channel*stride_channel + row*stride_row;
+    }
+
+    float tmp = 0.0f;
+
+    ggml_cuda_pdl_sync();
+    if (active) {
+        const float xi = x[tid];
+        tmp += xi * xi;
+    }
+
+    tmp = warp_reduce_sum(tmp);
+
+    __shared__ float s_sum[8];
+    if (threadIdx.x % WARP_SIZE == 0) {
+        s_sum[half*4 + tid/WARP_SIZE] = tmp;
+    }
+    __syncthreads();
+
+    if (!active) {
+        return;
+    }
+    const float * s = s_sum + half*4;
+    const float total = (s[0] + s[2]) + (s[1] + s[3]);
+
+    const float mean  = total / 128;
+    const float scale = rsqrtf(mean + eps);
+
+    const int64_t out_off = ((int64_t) (sample*nchannels + channel)*nrows + row)*128;
+    dst  += out_off;
+    gate += out_off;
+
+    const float normed = scale * x[tid] * w[tid];
+    dst[tid] = ggml_cuda_op_silu_single(gate[tid]) * normed;
+}
+
 static void rms_norm_f32_cuda(
         const float * x, float * dst, const int ncols, const int nrows, const int nchannels, const int nsamples,
         const int64_t stride_row, const int64_t stride_channel, const int64_t stride_sample, const float eps, cudaStream_t stream) {
@@ -1117,6 +1171,15 @@ void ggml_cuda_op_rms_norm_gate_fused(ggml_backend_cuda_context & ctx, ggml_tens
     const int64_t s01 = src0->nb[1] / sizeof(float);
     const int64_t s02 = src0->nb[2] / sizeof(float);
     const int64_t s03 = src0->nb[3] / sizeof(float);
+
+    if (ncols == 128) {
+        const dim3 blocks_num((src0->ne[1] + 1) / 2, src0->ne[2], src0->ne[3]);
+        const dim3 block_dims(256, 1, 1);
+        const ggml_cuda_kernel_launch_params launch_params = {blocks_num, block_dims, 0, ctx.stream()};
+        ggml_cuda_kernel_launch(rms_norm_f32_gate_pair128, launch_params, (const float *) src0->data, (const float *) w->data,
+            (const float *) gate->data, (float *) out->data, (int) src0->ne[1], s01, s02, s03, eps);
+        return;
+    }
 
     const dim3 blocks_num(src0->ne[1], src0->ne[2], src0->ne[3]);
     const dim3 block_dims(256, 1, 1);
