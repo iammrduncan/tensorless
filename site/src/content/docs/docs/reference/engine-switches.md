@@ -8,9 +8,9 @@ sidebar:
 
 The engine's P100 kernels are opt-in. Each is turned on by a `GGML_CUDA_*` environment variable, which a recipe sets in its `[run.env]` table, exactly as the release gate measured it. The launcher passes them to the container with `-e`, in alphabetical order. Leaving one out, or changing its value, runs a configuration that was not measured.
 
-Both `engine-v0.1.0` recipes set the same 21 switches with the same values. The engine reads each one once, when it is first needed. The source files named below are under [`engine/ggml/src/ggml-cuda/`](https://github.com/iammrduncan/tensorless/tree/main/engine/ggml/src/ggml-cuda).
+Both recipes set the same 21 switches with the same values, and engine-v0.2.0 did not change the set. The engine reads each one once, when it is first needed. The source files named below are under [`engine/ggml/src/ggml-cuda/`](https://github.com/iammrduncan/tensorless/tree/main/engine/ggml/src/ggml-cuda).
 
-The PN weight types need no switch: their kernels run whenever a tensor is `pn3t` or `pn4t`.
+The PN weight types need no switch: their kernels run whenever a tensor is `pn3t` or `pn4t`. That includes engine-v0.2.0's [PN prefill path](#the-pn-prefill-path), which is on by default.
 
 ## Attention
 
@@ -54,6 +54,19 @@ These replace stock `mul_mat_vec_q` paths on compute capability 6.0. All but `GG
 | `GGML_CUDA_PREFILL_CHUNK_GEMM` | `1` | off | For an fp32 matrix product with more than 1,024 columns, issues it as chunks of 1,024 columns plus a remainder (`ggml-cuda.cu`). The engine checks only that the variable is set. |
 | `GGML_CUDA_PREFILL_CHUNK_STREAMS` | `3` | `0` | With chunked GEMM, spreads one weight's chunks over up to this many worker streams, for shapes with at least 5,120 rows. Each chunk is the same call, so the result is the same as in sequence. `0` turns it off. |
 | `GGML_CUDA_SM86_GDN_COLS` | `8` | `4` | Columns of state per block in the gated delta net kernel, the recurrent layers of the model. One of `1`, `2`, `4` or `8`; another value means `4`. `8` applies only to batches of 64 tokens or more; shorter ones use `4` (`gated_delta_net.cu`). |
+
+## The PN prefill path
+
+Since engine-v0.2.0, a prompt's batched products of PN weights (more than 4 tokens at once) run on the engine's own GEMM kernels instead of cuBLAS SGEMM (`pn-gemm-sm60.cu`). The path is on by default: the prefill hill climb's judge measured only what runs with no extra variable. It has no recipe switch. These variables turn parts of it off, for comparing against the older arithmetic:
+
+| Variable | Unset | What setting it does |
+|---|---|---|
+| `GGML_PN_H2_OFF` | on | `1` turns off the half2 (fp16) GEMM that the weights of blocks 31 and up take, except `attn_k` and `attn_v`. They go back to the fp32 kernels, whose output is bit-identical to cuBLAS SGEMM's. |
+| `GGML_PN_TIER_LO` | `27` | The first block of the precision tier: blocks from here to 30 take the half2 GEMM with shorter chains, in the ubatches that are neither a prompt's first 512 tokens nor its final ubatch. `-1` turns the tier off. |
+| `GGML_PN_TIER_SINK` | on | `0` keeps the tier out of a prompt's first 1,024-token ubatch entirely. Unset, tokens 512 to 1,023 of that ubatch take the tier for blocks 28 to 30. |
+| `GGML_PN_GLU_OFF` | on | Set, it turns off the fused SwiGLU step, in which the second product of an FFN gate/up pair writes `silu(gate) * up` directly (`ggml-cuda.cu`). |
+
+`GGML_PN_H2_OFF=1` with `GGML_PN_TIER_LO=-1` gives fp32 arithmetic for every batched PN product. A run with any of these set is not the measured configuration.
 
 ## Other switches
 

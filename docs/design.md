@@ -2,6 +2,8 @@
 
 Status: v0.1.0 released, 2026-11-02 (engine-v0.1.0, image 0.1.0-sm60, launcher v0.1.0).
 
+engine-v0.2.0 is a release candidate, 2026-11-12: `engine/` holds its source (the champion of the prefill hill climb that started from engine-v0.1.0), and the Qwen3.8-27B-PN3 recipe is a draft on it until its image is built and measured ([receipt](receipts/engine-v0.2.0/Qwen3.8-27B-PN3-GGUF-p100.md)). The Q3Floor recipe stays on engine-v0.1.0 until it has passed its own checks on the new image.
+
 ## The goal
 
 One command runs a model that has been tuned for a GPU, on the engine it was tuned with:

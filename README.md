@@ -22,6 +22,8 @@ The first target is the NVIDIA Tesla P100 (16 GB, sm_60), running Qwen3.8-27B-PN
 
 **Status: v0.1.0 released.** The launcher, the engine image `0.1.0-sm60` and both models are published, and the published image has been measured on a real P100 for each launch target. How the pieces fit together, and how engine releases are made, is in [docs/design.md](docs/design.md).
 
+**Next: engine-v0.2.0, a release candidate.** A prefill hill climb took Qwen3.8-27B-PN3's prompt speed from 121 to 200 tok/s on a 4,100-token prompt, with the same settings and no loss of decode speed. Its source is in `engine/`, and the Qwen3.8-27B-PN3 recipe is a draft on it until the new image is built and measured on a P100 ([receipt](docs/receipts/engine-v0.2.0/Qwen3.8-27B-PN3-GGUF-p100.md)). The table below is the v0.1.0 release.
+
 ## Launch targets
 
 Every model tensorless can launch today. Each row is a recipe: the exact engine image, model file and settings that were measured on that card.
