@@ -3,8 +3,7 @@
 # switches, the same for the decode climb (engine-v0.1.0) and the prefill climb (engine-v0.2.0).
 # The prefill climb's faster prompt path is on by default in engine-v0.2.0 and needs no switch.
 # The model file is the one the climbs measured (sha256 15ce2d44...).
-# Draft until the 0.2.0-rc1 image is built, pinned below and measured on a P100 (docs/receipts/engine-v0.2.0/).
-# An image built from this source outside CI has been checked on a P100: see the receipt.
+# Draft until the 0.2.0-rc1 image has run on a real P100 (docs/receipts/engine-v0.2.0/).
 # The released recipe is this file at the tag v0.1.0: engine-v0.1.0, image sha256:35409ff9...
 schema = 1
 status = "draft"
@@ -29,7 +28,7 @@ min_driver         = "525.60.13"
 [engine]
 release = "engine-v0.2.0"
 arch    = "sm60"
-image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:0000000000000000000000000000000000000000000000000000000000000000"   # placeholder: 0.2.0-rc1-sm60 is not built yet
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7"   # 0.2.0-rc1-sm60
 
 [run]
 alias       = "iamMrDuncan/Qwen3.8-27B-PN3-GGUF"
