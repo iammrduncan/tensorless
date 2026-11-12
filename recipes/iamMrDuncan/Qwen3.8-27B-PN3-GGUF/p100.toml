@@ -4,6 +4,7 @@
 # The prefill climb's faster prompt path is on by default in engine-v0.2.0 and needs no switch.
 # The model file is the one the climbs measured (sha256 15ce2d44...).
 # Draft until the 0.2.0-rc1 image is built, pinned below and measured on a P100 (docs/receipts/engine-v0.2.0/).
+# An image built from this source outside CI has been checked on a P100: see the receipt.
 # The released recipe is this file at the tag v0.1.0: engine-v0.1.0, image sha256:35409ff9...
 schema = 1
 status = "draft"
@@ -72,7 +73,7 @@ GGML_CUDA_SM86_GDN_COLS         = "8"
 GGML_CUDA_FATTN_TILE_OCC1       = "1"
 
 [receipt]
-source  = "decode_tps.short and prefill: the prefill hill climb's judge, on a source build of the same engine commit, 2026-11-12. The published image has not been measured yet (docs/receipts/engine-v0.2.0/Qwen3.8-27B-PN3-GGUF-p100.md)."
+source  = "decode_tps.short and prefill: the prefill hill climb's judge, on a source build of the engine's research commit, 2026-11-12. An image built from this source outside CI, on a P100 with tensorless bench: 30.50 tok/s median decode, and prefill 199.0 tok/s on a 3,744-token prompt. The release image has not been built or measured yet (docs/receipts/engine-v0.2.0/Qwen3.8-27B-PN3-GGUF-p100.md)."
 summary = "Prefill about 200 tok/s on a cold prompt of about 4,100 tokens, 1.65x engine-v0.1.0. Decode about 30 tok/s at short context, 1.14x the Q3 baseline model on the same card. Not yet measured at 32K or 65K."
 decode_tps  = { short = 30.43 }
 prefill_tps = { ctx_4k = 200.1 }

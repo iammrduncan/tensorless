@@ -2,11 +2,11 @@
 
 What has been measured for `recipes/iamMrDuncan/Qwen3.8-27B-PN3-GGUF/p100.toml`, by whom, and on what. Numbers go here only with their scope.
 
-**Status: candidate.** The research build of this engine has been measured. Its image has not been built or measured yet, so the recipe is a draft (see [Not measured yet](#not-measured-yet)).
+**Status: candidate.** The research build of this engine has been measured, and an image built from this source outside CI has been checked on a P100 ([below](#a-locally-built-image-on-a-p100-2026-11-12)). The release image has not been built or measured yet, so the recipe is a draft (see [Not measured yet](#not-measured-yet)).
 
 ## What was measured
 
-The engine source of v0.2.0 is the champion of an automated prefill hill climb that started from engine-v0.1.0: research commit `df673571`, champion 27 of the run, exported unchanged except for six comment lines (see `engine/PROVENANCE.md`). The recipe's `[run]` section did not change: the climb's judge ran the same `llama-server` flags and the same 21 engine switches as engine-v0.1.0's, and a new path had to be on by default to be measured at all.
+The engine source of v0.2.0 is the champion of an automated prefill hill climb that started from engine-v0.1.0: research commit `df673571`, champion 27 of the run, exported unchanged except for six comment lines, plus one fix made here afterwards (see `engine/PROVENANCE.md` and [the check below](#a-locally-built-image-on-a-p100-2026-11-12)). The judge's numbers are for the champion without that fix. The recipe's `[run]` section did not change: the climb's judge ran the same `llama-server` flags and the same 21 engine switches as engine-v0.1.0's, and a new path had to be on by default to be measured at all.
 
 The judge built each source with the same CUDA configuration as the image and timed it on one P100, from outside the engine (the driver stamps the request and each streamed token on its own clock). It measured the starting point when the climb began, and the champion with the champion before it, both on one card:
 
@@ -53,12 +53,36 @@ Prefill on the code prompt after each group of promotions (each promotion's own 
 - **The tier was accepted by the owner, not by the automated audit.** The audit sent promotions 26 and 27 to the owner for two reasons: the tier's rule reads a batch's output flag, so the arithmetic depends on how a tool labels its batches, and each stacked precision change had been compared with the champion before it, not with the starting point. A check on six other texts followed (1,394 to 4,124 prompt tokens, 512 forced tokens each, one run), against the same build with the half2 path switched off. It read: mean KL 5.0e-5 to 9.1e-4, the same top token at 98.8% or more of positions, and decode-path perplexity between 0.9989× and 1.0024×. On the first 128 forced tokens the perplexity ratio was above 1.0025 for two of the six texts (1.0029 and 1.0040). The build without promotion 27 also read above it on two of the six, and that window moved by 0.3 to 0.8 points between the two builds.
 - **The tier's ubatch position is process-wide state.** The recipe runs one slot (`-np 1`) and one context, which is what was measured. Interleaved contexts were not.
 
+## A locally built image on a P100 (2026-11-12)
+
+Before any release image existed, the lab built `containers/engine.sm60.Containerfile` from this repository's local commits on the P100 host and ran each image as a cluster workload on one Tesla P100-PCIE-16GB, with exactly the recipe's 21 switches and flags. A script on a Mac timed it through ssh and a port-forward, on its own clock: the judge's method, with other prompts (the first 13,500 characters of a code text and of a prose text, plus an instruction). The released engine-v0.1.0 image ran on the same card in between, as the baseline.
+
+| Measure | engine-v0.2.0 source, with the fix | The champion's source, without the fix | engine-v0.1.0, released image |
+|---|---:|---:|---:|
+| Prefill, code prompt (3,744 tokens), median of 3 | **199.0 tok/s** | 198.5 | 118.9 |
+| Prefill, prose prompt (4,657 tokens), median of 3 | **201.9 tok/s** | 201.7 | 121.0 |
+| Decode, 256 greedy tokens after a 555- / 700-token prompt | 30.47 / 30.50 tok/s | 30.49 / 30.51 | 30.31 / 30.35 |
+| `tensorless bench` decode, median of 3 (256 tokens after a 429-token prompt) | **30.50 tok/s** | 30.54 | 30.37 |
+| `tensorless bench` time to first token, 429-token prompt | 2.60 s | 2.59 s | 4.47 s |
+| A chat of three turns with the prompt cache on, sent twice | answers, the same both times | **the server aborts on turn 2** | answers, the same both times |
+| GPU memory, idle after load / the maximum during the run | 14,139 / 15,383 MiB | 14,139 / 15,383 MiB | 13,997 / 14,577 MiB |
+
+Prefill is 1.67× the released engine on both prompts, on the same card.
+
+**The abort, and the fix.** The champion's source answered the first turn of a chat and aborted on the second with `failed to remove sequence 0 with p0=442, p1=-1`, after a 447-token first turn and after a 2,586-token one, and with Qwen3.8-27B-UD-IQ3_XXS-Q3Floor as well. The released engine-v0.1.0 image answered the same chats. The cause was in the change that holds a prompt batch until the next one arrives: while a batch was held, the engine reported its first position as the sequence's minimum, where this model's recurrent memory reports its last. `llama-server` records its context checkpoints with that value, so each came out one token short, and the next request that reused the prompt cache asked for a rollback the recurrent state cannot do. The hill climb's judge sent every prompt with `cache_prompt` false, so no judged run reached it. The fix is 12 lines in `engine/src` and touches no kernel. With it, the chats answer with the same cache reuse as engine-v0.1.0 (a 2,586-token first turn, then 60 and 25 tokens processed), the first turn's answer is the same text as engine-v0.1.0's, and the generated text and the speed are the same as without the fix.
+
+**Greedy text is not engine-v0.1.0's.** On both decode prompts, the 256 greedy tokens differ between engine-v0.1.0 and this engine. That is the fp16 prefill arithmetic: the numerics bars hold the distributions close, not the text identical.
+
+**Memory.** This engine holds about 140 MiB more than engine-v0.1.0 when idle and about 800 MiB more at its maximum, which it reaches during a long prefill. That left about 890 MiB of the card's 16,269 MiB free.
+
+**Qwen3.8-27B-UD-IQ3_XXS-Q3Floor on the champion's source** (not a release measurement: the image build for the fix was using the host's CPUs during these timings): prefill 144.2 / 148.4 tok/s, decode 26.61 / 26.60 tok/s, `tensorless bench` 26.67 tok/s, GPU memory 13,289 MiB idle and 13,869 MiB at its maximum.
+
 ## Not measured yet
 
-- **The published image.** No `0.2.0` image exists yet. CI builds `0.2.0-rc1-sm60` from this source, the recipe pins its digest, and the release gate runs that image on a P100 with `tensorless bench`. Until then the recipe is a draft with a placeholder digest.
-- **GPU memory.** The prefill path keeps buffers for up to three dequantized weights for the life of the process, so expect this engine to use more memory than engine-v0.1.0's 13,997 MiB idle and 14,577 MiB generating. Every judged block kept at least 512 MiB free with the 65,536-token context allocated. The image's own figures are the release gate's to take.
+- **The published image.** No `0.2.0` image exists yet. CI builds `0.2.0-rc1-sm60` from this source, the recipe pins its digest, and the release gate runs that image on a P100 with `tensorless bench`. Until then the recipe is a draft with a placeholder digest. The check above ran an image built from the same source and Containerfile, but not CI's build.
+- **The fix under the judge.** The judge measured the champion without the fix. The check above found the same speed with it, on other prompts and without the judge's numerics guard. The fix changes no arithmetic, only a position the engine reports to the server.
 - **Qwen3.8-27B-PN3's quality checks on this engine.** Perplexity, needle recall and the task screen were last run on the decode climb's starting point (the engine-v0.1.0 receipt). Two climbs have since each held numerics within the same bars of their own starting points, and this one changed the prefill arithmetic, so the release gate should run them again on this engine.
-- **Follow-up requests on a cached prompt.** The judge sent every prompt cold, with `cache_prompt` false. The engine now holds a prompt batch that has no outputs until the next batch or the next memory operation arrives, so the release gate should run a multi-turn chat on the image.
+- **Other ways into the held batch.** The check above covered a chat that reuses the prompt cache. Saving and restoring a slot, a context shift on a full context, and a request cancelled in the middle of a prompt were not tried.
 - **Prefill at 32K and 65K, and prompts over 4,100 tokens in general.** Attention costs a larger share of a long prompt, so expect less than 200 tok/s there.
 - **Decode at 32K and 65K context.** As for engine-v0.1.0.
 - **Speculative decoding** for Qwen3.8-27B-PN3.
