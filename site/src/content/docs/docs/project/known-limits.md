@@ -1,21 +1,29 @@
 ---
 title: "Known limits"
-description: "What tensorless v0.1.0 does not do yet, what has not been measured, and what to avoid."
+description: "What tensorless v0.2.0 does not do yet, what has not been measured, and what to avoid."
 type: project
 sidebar:
   order: 5
 ---
 
-tensorless v0.1.0 is a first release. This page lists what it does not do yet, what has not been measured, and the one thing to avoid. Each item says what is true today; none of them is a promise of when it will change.
+tensorless v0.2.0 is an early release. This page lists what it does not do yet, what has not been measured, and the one thing to avoid. Each item says what is true today; none of them is a promise of when it will change.
 
 ## Long context is not measured on this engine
 
-The receipts for engine-v0.1.0 measure decode at short context: 256 tokens after a prompt of a few hundred. Decode at 32K and 65K context has not been measured on this engine yet.
+The receipts for engine-v0.2.0 measure decode at short context, 256 tokens after a prompt of a few hundred, and prefill on prompts of about 4,000 tokens. Decode and prefill at 32K and 65K context have not been measured on this engine yet.
 
-- **Qwen3.8-27B-PN3:** only the hill climb's starting point was measured at long context, at 7.55 and 7.39 tok/s for 32K and 65K. The climb then made short-context decode almost four times faster. Attention takes a larger share of each token at long context, so expect this engine's long-context decode to be below its 30 tok/s, by an amount nobody has measured yet.
-- **Qwen3.8-27B-UD-IQ3_XXS-Q3Floor:** 24.5 and 22.9 tok/s at 32K and 65K, measured on the climb's starting commit. This model's code path changed little after that: its text stayed bit-identical, and its speed was guarded within 3%.
+- **Qwen3.8-27B-PN3:** only the decode hill climb's starting point was measured at long context, at 7.55 and 7.39 tok/s for 32K and 65K. That climb then made short-context decode almost four times faster. Attention takes a larger share of each token at long context, so expect this engine's long-context decode to be below its 30 tok/s, and its long-prompt prefill to be below its 200 tok/s, by amounts nobody has measured yet.
+- **Qwen3.8-27B-UD-IQ3_XXS-Q3Floor:** 24.5 and 22.9 tok/s at 32K and 65K, measured on the decode climb's starting commit, two engine releases back. This model's code path changed little after that: its text stayed bit-identical through both hill climbs, and its speed was guarded within 3%.
 
 Both recipes still allocate the full 65,536-token context.
+
+## The quality checks were not repeated for this engine
+
+Qwen3.8-27B-PN3's perplexity, needle recall and task screen were measured on the decode hill climb's starting point. Each hill climb since has held the model's outputs close to its own starting point: KL divergence within 2.593e-3, the same top token at 95% or more of positions, perplexity within 0.25%. engine-v0.2.0 also changed the arithmetic of prompt processing: from block 27 up, a prompt's batched products run on fp16 operands. So this engine's answers are close to engine-v0.1.0's, not identical: on two test prompts, 256 greedy tokens came out as different text. The full quality checks have not been run again on this engine.
+
+## Little memory to spare
+
+With Qwen3.8-27B-PN3, the engine uses 15,383 MiB of the card's 16,269 MiB once it has read its first prompt, about 800 MiB more than engine-v0.1.0. Anything else on the card may not fit.
 
 ## Don't run PN models on the CPU
 

@@ -1065,7 +1065,28 @@ static __global__ void flash_attn_tile(
     __syncthreads();
 
     // Main loop over KV cache:
-    const int k_VKQ_max = KV_max ? KV_max[sequence*gridDim.x + blockIdx.x] : ne11;
+    int k_VKQ_max = KV_max ? KV_max[sequence*gridDim.x + blockIdx.x] : ne11;
+    if (!KV_max && maskh && ncols2 == 1 && ne01.z > 1 && ne11 % 64 == 0) {
+        // No KV_max table (the launcher builds one only from 1024 queries): the causal bound is found here. A 64-key chunk
+        // that every query of the tile masks to -inf adds exp(-inf) = 0, so the loop may stop after the last chunk that
+        // has a visible key. The scan runs from the top chunk down, one barrier per chunk; with no visible key it keeps ne11.
+        const int tid      = threadIdx.y*warp_size + threadIdx.x;
+        const int nthreads = blockDim.x*blockDim.y;
+        int  c     = ne11/64;
+        bool found = false;
+        while (c > 0 && !found) {
+            --c;
+            bool visible = false;
+            for (int e = tid; e < 64*ncols1 && !visible; e += nthreads) {
+                const int j = col_Q_0 + e/64;
+                visible = j < int(ne01.z) && __half2float(maskh[j*stride_mask + 64*c + e % 64]) != -INFINITY;
+            }
+            found = __syncthreads_or(visible);
+        }
+        if (found) {
+            k_VKQ_max = 64*(c + 1);
+        }
+    }
     if (ncols2 == 1) {
         // Branch with out-of-bounds checks.
         int k_VKQ_0 = blockIdx.y*nbatch_fa;

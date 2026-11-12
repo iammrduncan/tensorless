@@ -1,6 +1,8 @@
 # tensorless: design
 
-Status: v0.1.0 released, 2026-11-02 (engine-v0.1.0, image 0.1.0-sm60, launcher v0.1.0).
+Status: v0.2.0 released, 2026-11-12 (engine-v0.2.0, image 0.2.0-sm60, launcher v0.2.0). v0.1.0 was released on 2026-11-02 (engine-v0.1.0, image 0.1.0-sm60, launcher v0.1.0).
+
+engine-v0.2.0 is the champion of the prefill hill climb that started from engine-v0.1.0, plus one fix found by running a locally built image on a P100 before the release candidate was built. Both recipes moved to it after the published image was measured with each model ([receipts](receipts/engine-v0.2.0/)).
 
 ## The goal
 

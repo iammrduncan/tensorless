@@ -7,8 +7,8 @@ import map from "../../data/model-map.json";
 const MiB = 2 ** 20;
 const d = map.dims;
 const ctx = 65536;
-const card = 16269; // MiB, as the P100 reported it (docs/receipts/engine-v0.1.0)
-const measured = { idle: 13997, generating: 14577 };
+const card = 16269; // MiB, as the P100 reported it (docs/receipts/engine-v0.2.0)
+const measured = { idle: 14139, generating: 15383 };
 
 // Weights by type, main model only (the next-token layer is skipped at load: TENSOR_SKIP).
 const byType: Record<string, number> = {};

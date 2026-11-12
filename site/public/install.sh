@@ -4,14 +4,14 @@
 #   curl -fsSL https://tensorless.dev/install.sh | sh
 #
 # Settings (environment variables):
-#   TENSORLESS_VERSION      the release to install (default: 0.1.0)
+#   TENSORLESS_VERSION      the release to install (default: 0.2.0)
 #   TENSORLESS_INSTALL_DIR  where to put the binary (default: $HOME/.local/bin)
 #
 # It installs one file, the tensorless binary, and changes nothing else. Linux x86_64 and
 # aarch64, and macOS on Apple silicon (where tensorless can show recipes but serves no model).
 set -eu
 
-version="${TENSORLESS_VERSION:-0.1.0}"
+version="${TENSORLESS_VERSION:-0.2.0}"
 dir="${TENSORLESS_INSTALL_DIR:-$HOME/.local/bin}"
 repo="https://github.com/iammrduncan/tensorless"
 

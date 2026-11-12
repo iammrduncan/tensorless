@@ -80,7 +80,7 @@ To keep models on a larger disk, see [Keep models on another disk](../run/model-
 
 ## 6. Free the GPU
 
-A model and its 65,536-token context take about 14 GB of the card's 16 GB: the release measured 13,997 MiB with the server idle and 14,577 MiB while it generated. Anything else on the card can make the server fail to start, or run slower.
+A model and its 65,536-token context take about 15 GB of the card's 16 GB: the release measured 14,139 MiB with the server idle and 15,383 MiB once it had read its first prompt. Anything else on the card can make the server fail to start, or run slower.
 
 `nvidia-smi` lists the processes that use the card, at the bottom of its output. Stop them before you start a model.
 

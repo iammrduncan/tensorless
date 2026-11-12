@@ -14,17 +14,17 @@ sidebar:
 | **Compute capability** | NVIDIA's version number for a GPU architecture. The Tesla P100 is 6.0 (`sm_60`). `nvidia-smi` reports it as `compute_cap`. |
 | **Context** | The number of tokens the server keeps for one conversation: prompt and output together. The recipes allocate 65,536 tokens. `--context` changes it and makes the run untuned. |
 | **Decode** | Generating output tokens one at a time, after the prompt has been read. Decode speed is in tokens per second (tok/s). On a P100 it is limited mostly by how fast the weights can be read from memory. |
-| **Digest** | The sha256 of a container image's manifest, such as `sha256:35409ff9…`. A digest names exactly one image; a tag can be moved. Recipes pin images by digest. |
+| **Digest** | The sha256 of a container image's manifest, such as `sha256:b95f77cd…`. A digest names exactly one image; a tag can be moved. Recipes pin images by digest. |
 | **Draft** | A recipe with `status = "draft"`: it has not passed the release gate. `pull`, `run` and `serve` refuse it unless `--allow-draft`. |
 | **Engine** | The inference engine: a fork of llama.cpp tuned for the P100, in [`engine/`](https://github.com/iammrduncan/tensorless/tree/main/engine). It runs as `llama-server` inside the engine image. |
-| **Engine release** | A tagged engine version, `engine-vX.Y.Z`, such as `engine-v0.1.0`: the exact source in `engine/` at that tag, and its build configuration. Versioned separately from the launcher. |
+| **Engine release** | A tagged engine version, `engine-vX.Y.Z`, such as `engine-v0.2.0`: the exact source in `engine/` at that tag, and its build configuration. Versioned separately from the launcher. |
 | **Engine switch** | A `GGML_CUDA_*` environment variable that turns on one of the engine's P100 kernels or changes its setting. A recipe sets them in `[run.env]`, exactly as measured. See [Engine switches](engine-switches.md). |
-| **Hill climb** | An automated campaign in which AI agents propose changes to the engine, and a judge they cannot change measures each one and keeps only the ones that are faster and pass the guards. The engine-v0.1.0 decode climb made 131 judged attempts and kept 28 improvements. |
+| **Hill climb** | An automated campaign in which AI agents propose changes to the engine, and a judge they cannot change measures each one and keeps only the ones that are faster and pass the guards. The engine-v0.1.0 decode climb made 131 judged attempts and kept 28 improvements; the engine-v0.2.0 prefill climb ran 369 and kept 26. |
 | **Image** | One build of an engine release for one GPU architecture, published as `ghcr.io/iammrduncan/tensorless-engine:<X.Y.Z>-<arch>`. See [Engine image](engine-image.md). |
 | **Judge** | The measuring program of a hill climb. It builds the candidate, runs it on the card, times it from outside the engine and checks its numerics. Agents cannot see or change it. |
 | **Launch target** | A model you can launch: one released recipe. See [Launch targets](launch-targets.md). |
 | **Launcher** | The `tensorless` command. It holds no inference code; it reads recipes, fetches and checks the image and the model, and runs the container. |
-| **MTP** | Multi-token prediction: a form of speculative decoding in which a small draft head proposes tokens that the model then checks. Not in the v0.1.0 recipes. |
+| **MTP** | Multi-token prediction: a form of speculative decoding in which a small draft head proposes tokens that the model then checks. Not in the v0.2.0 recipes. |
 | **P0k+19** | The tensor mix of Qwen3.8-27B-PN3: which tensors use `pn3t`, which use `pn4t`, and which keep standard types. See [PN weight format](pn-format.md#files-that-use-pn). |
 | **Pascal** | NVIDIA's GPU architecture of 2016, which includes the Tesla P100. CUDA 13 dropped it, and the R580 driver branch is its last. |
 | **PN** | The P100-native block weight format of this engine, PNX-FORMAT-v0. Every block is 34 bytes and decodes exactly in fp32. See [PN weight format](pn-format.md). |

@@ -5,7 +5,8 @@
 # Unsloth's file byte for byte. Hosted whole, renamed only (same sha256 as the file that was measured; known in the
 # research as "A1"). It was the model the P100 kernel campaigns were first tuned on, and the comparison model of
 # every PN measurement.
-# [run] is the configuration the decode hill climb's judge decoded it with, on this engine, in every block.
+# [run] is the configuration the hill climbs' judge decoded it with, on this engine, in every block.
+# Released in engine-v0.2.0 after the published image was measured on a P100 (docs/receipts/engine-v0.2.0/).
 schema = 1
 status = "released"
 
@@ -27,9 +28,9 @@ min_memory_mib     = 16000
 min_driver         = "525.60.13"
 
 [engine]
-release = "engine-v0.1.0"
+release = "engine-v0.2.0"
 arch    = "sm60"
-image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7"   # 0.1.0-sm60 (measured as 0.1.0-rc1-sm60)
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7"   # 0.2.0-sm60 (measured as 0.2.0-rc1-sm60)
 
 [run]
 alias       = "iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF"
@@ -73,12 +74,12 @@ GGML_CUDA_SM86_GDN_COLS         = "8"
 GGML_CUDA_FATTN_TILE_OCC1       = "1"
 
 [receipt]
-source  = "decode_tps: the research hill climb's judge, on a source build (short context: this engine commit; 32K/65K: the climb's starting commit). The published image, measured on a P100 with tensorless bench: 26.18 tok/s median decode (docs/receipts/engine-v0.1.0/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF-p100.md)."
-summary = "Decode about 26.3 tok/s at short context and 24.5 / 22.9 tok/s at 32K / 65K. No speculative decoding in this recipe."
-decode_tps = { short = 26.26, ctx_32k = 24.52, ctx_65k = 22.92 }
+source  = "decode_tps: the research hill climbs' judge, on a source build (short context: this engine's research commit; 32K/65K: the decode climb's starting commit). The published image, measured on a P100 with tensorless bench: 26.69 tok/s median decode (docs/receipts/engine-v0.2.0/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF-p100.md)."
+summary = "Decode about 26.5 tok/s at short context and 24.5 / 22.9 tok/s at 32K / 65K. No speculative decoding in this recipe."
+decode_tps = { short = 26.53, ctx_32k = 24.52, ctx_65k = 22.92 }
 notes = [
-  "short: 256 greedy tokens after a cold prompt of about 600 tokens, code prompt (prose 26.27), on this engine commit.",
-  "ctx_32k / ctx_65k: 1,024 greedy tokens after a 31.7K / 64.5K-token prompt, code (prose 24.54 / 22.97), measured on the hill climb's starting commit. This model's code path changed little after it: its text stayed bit-identical, and its speed was guarded within 3%.",
+  "short: 256 greedy tokens after a cold prompt of about 600 tokens, code prompt (prose 26.58), on this engine's research commit.",
+  "ctx_32k / ctx_65k: 1,024 greedy tokens after a 31.7K / 64.5K-token prompt, code (prose 24.54 / 22.97), measured on the decode hill climb's starting commit, two engine releases back. This model's code path changed little after it: its greedy text stayed bit-identical through both hill climbs, and its speed was guarded within 3%.",
   "The earlier kernel campaign also ran this model with MTP speculation (about 28 tok/s at 32K/65K on its own engine version). That mode is not in this recipe yet.",
   "--jinja is not part of the measured configuration; it only applies the chat template for /v1/chat/completions.",
 ]

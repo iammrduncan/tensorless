@@ -44,9 +44,9 @@ min_memory_mib     = 16000
 min_driver         = "525.60.13"
 
 [engine]
-release = "engine-v0.1.0"
+release = "engine-v0.2.0"
 arch    = "sm60"
-image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7"
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7"
 
 [run]
 alias       = "iamMrDuncan/Qwen3.8-27B-PN3-GGUF"
@@ -61,9 +61,9 @@ GGML_CUDA_FATTN_SM60 = "1"
 # ... the other engine switches
 
 [receipt]
-summary     = "Decode about 30 tok/s at short context, 1.14x the Q3 baseline model on the same card. Not yet measured at 32K or 65K."
-decode_tps  = { short = 30.06 }
-prefill_tps = { ctx_4k = 121.4 }
+summary     = "Prefill about 200 tok/s on a cold prompt of about 4,100 tokens, 1.65x engine-v0.1.0. Decode about 30 tok/s at short context, 1.14x the Q3 baseline model on the same card. Not yet measured at 32K or 65K."
+decode_tps  = { short = 30.43 }
+prefill_tps = { ctx_4k = 200.1 }
 ```
 
 The full files are in [`recipes/`](https://github.com/iammrduncan/tensorless/tree/main/recipes). The schema's own description is [recipes/README.md](https://github.com/iammrduncan/tensorless/blob/main/recipes/README.md).
@@ -104,7 +104,7 @@ A GPU matches a card when its compute capability equals `compute_capability` and
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `release` | string | yes | The engine release the recipe was measured on, such as `engine-v0.1.0`. |
+| `release` | string | yes | The engine release the recipe was measured on, such as `engine-v0.2.0`. |
 | `arch` | string | yes | The GPU architecture of the image, such as `sm60`. |
 | `image` | string | yes | The engine image, always by digest: `name@sha256:<64 hex>`. A tag is refused. |
 

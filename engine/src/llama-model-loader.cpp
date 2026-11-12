@@ -1404,6 +1404,22 @@ struct ggml_tensor * llama_model_loader::create_tensor(
 
     const bool duplicated = flags & TENSOR_DUPLICATED;
 
+    if (flags & TENSOR_SSM_BETA_ALPHA_VIEW) {
+        // the layer's ssm_beta rows come first, then its ssm_alpha rows, in one parent with no GGUF data of its own;
+        // the parent is not counted as a created tensor, the two views are, and their GGUF data loads straight into it
+        const std::string parent_name = format("blk.%d.ssm_beta_alpha_fused.weight", tn.bid);
+        ggml_tensor * parent = ggml_get_tensor(ctx, parent_name.c_str());
+        if (!parent) {
+            parent = ggml_new_tensor_2d(ctx, t_meta.type, t_meta.ne[0], 2*t_meta.ne[1]);
+            ggml_set_name(parent, parent_name.c_str());
+        }
+        const int64_t row0 = tn.tensor == LLM_TENSOR_SSM_ALPHA ? t_meta.ne[1] : 0;
+        ggml_tensor * view = ggml_view_2d(ctx, parent, t_meta.ne[0], t_meta.ne[1], parent->nb[1], row0*parent->nb[1]);
+        ggml_set_name(view, ggml_get_name(&t_meta));
+        n_created++;
+        return view;
+    }
+
     struct ggml_tensor * tensor = ggml_dup_tensor(ctx, &t_meta);
     ggml_set_name(tensor, ggml_get_name(&t_meta));
 

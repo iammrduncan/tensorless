@@ -39,7 +39,7 @@ document.querySelectorAll<HTMLButtonElement>("button[data-copy]").forEach((btn) 
   });
 });
 
-// Counters: an element with data-count="30.03" counts up to it, once, when it comes on screen.
+// Counters: an element with data-count="30.48" counts up to it, once, when it comes on screen.
 document.querySelectorAll<HTMLElement>("[data-count]").forEach((el) => {
   const target = Number(el.dataset.count);
   const from = Number(el.dataset.from ?? 0);

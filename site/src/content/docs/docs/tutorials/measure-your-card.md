@@ -57,7 +57,7 @@ iamMrDuncan/Qwen3.8-27B-PN3-GGUF on p100, 3 runs of 256 tokens (median):
   decode         <decode> tok/s
   TTFT           <ms> ms
   prompt tokens  429
-  receipt        30.06 tok/s decode (short); this run is <difference>%
+  receipt        30.43 tok/s decode (short); this run is <difference>%
 The receipt was measured with a different prompt, so expect a few percent of difference.
 ```
 
@@ -65,9 +65,9 @@ The receipt was measured with a different prompt, so expect a few percent of dif
 
 - **decode** is how many tokens per second the model generates once it has started answering: the median of the three runs. This is the number you feel when you chat.
 - **TTFT**, time to first token, is how long the request took before the first token arrived. Most of it is reading the 429-token prompt, so it grows with the length of the prompt.
-- **receipt** compares your median with the recipe's receipt, `decode_tps.short = 30.06`. The research hill climb's judge measured that number when it tuned the engine.
+- **receipt** compares your median with the recipe's receipt, `decode_tps.short = 30.43`. The research hill climb's judge measured that number when it tuned the engine.
 
-When the release was made, the published image measured **30.03 tok/s** on a P100 with this same command: 0.1% below the receipt. If your result is within a few percent of 30.06, your card runs the model as it was measured.
+When the release was made, the published image measured **30.48 tok/s** on a P100 with this same command: 0.2% above the receipt. Its time to first token was 2.60 s. If your result is within a few percent of 30.43, your card runs the model as it was measured.
 
 If yours is much lower, look for these:
 
@@ -94,4 +94,4 @@ Next:
 - [Share your results](../how-to/use/share-results.md): numbers from other P100s help everyone.
 - [Benchmark a running server](../how-to/use/benchmark.md): more runs, longer runs and JSON output.
 - [How a release is made, and why you can trust its numbers](../explanation/releases-and-receipts.md).
-- [The receipts](../reference/receipts.md) of engine-v0.1.0, for both launch targets.
+- [The receipts](../reference/receipts.md) of engine-v0.2.0, for both launch targets.

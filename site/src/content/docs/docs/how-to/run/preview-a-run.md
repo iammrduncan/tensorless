@@ -41,9 +41,9 @@ Card
   driver   525.60.13 or newer
 
 Engine
-  release  engine-v0.1.0
+  release  engine-v0.2.0
   arch     sm60
-  image    ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7
+  image    ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7
 ```
 
 The output goes on with **Run** (the context, the arguments, the engine switches and the full container command) and **Receipt** (what was measured). Each part:
@@ -83,7 +83,7 @@ runtime:  podman
 
 # 1. pull the engine image, unless 'podman image inspect' finds it
 podman pull \
-    ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7
+    ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7
 
 # 2. download the model (12.95 GB), resuming a partial download, and check its sha256 15ce2d4469673f1f1753c55de3780cfe04311dd6f05cb41633d73df128e91476
 GET https://huggingface.co/iamMrDuncan/Qwen3.8-27B-PN3-GGUF/resolve/c701b6690ec360b16d40f85df1cb76062e30cd38/Qwen3.8-27B-PN3-P0k19.gguf

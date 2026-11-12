@@ -44,6 +44,7 @@
 #include "ggml-cuda/pad.cuh"
 #include "ggml-cuda/pool2d.cuh"
 #include "ggml-cuda/pool1d.cuh"
+#include "ggml-cuda/pn-gemm-sm60.cuh"
 #include "ggml-cuda/quantize.cuh"
 #include "ggml-cuda/rope.cuh"
 #include "ggml-cuda/roll.cuh"
@@ -1562,6 +1563,242 @@ struct batched_mul_mat_traits<GGML_TYPE_F16> {
     static inline auto convert_nc(ggml_type src_type) { return ggml_get_to_fp16_nc_cuda(src_type); }
 };
 
+// PN prefetch for the batched MUL_MAT (prefill). While a batched PN node runs its GEMM, the graph loop dequantizes the
+// next batched PN nodes' weights on a side stream, into a ring of six sub-slots carved from three chunks. A chunk is
+// sized for the largest fp32 node: it holds one fp32 weight, or two fp16 operands (the h2 nodes of the last blocks) in
+// its halves, so the look-ahead of the h2 nodes takes no memory the fp32 slots did not already hold. It is the same
+// dequant kernel as the in-line path, so the values are identical. A sub-slot is reused only after its consumer-done event.
+struct pn_prefetch_chunk {
+    void * buf = nullptr;   // the bytes; the second fp16 half starts at cap / 2
+    size_t cap = 0;         // bytes buf holds
+};
+
+struct pn_prefetch_slot {
+    const void * src = nullptr;   // src0->data of the weight held here, until a node takes it
+    int64_t      n   = 0;         // its element count
+    int          chunk = 0;       // the chunk it lives in
+    int          half  = 0;       // the fp16 half of the chunk (an fp32 weight takes the whole chunk)
+    bool         f16   = false;   // holds fp16 operands for the h2 GEMM (ggml_cuda_pn_h2_sm60_f16)
+    bool         busy  = false;   // the second sub-slot of a whole-chunk fp32 weight, while that weight is held
+    cudaEvent_t  ready = nullptr; // side stream: the dequant is done
+    cudaEvent_t  done  = nullptr; // consumer stream: last GEMM read is enqueued
+    bool         consumed = false;
+};
+
+struct pn_prefetch_state {
+    cudaStream_t side = nullptr;
+    cudaEvent_t  pre  = nullptr;  // main stream: everything enqueued so far
+    pn_prefetch_chunk chunk[3];
+    pn_prefetch_slot  slot[6];    // slots 2c and 2c+1 are the two halves of chunk c
+    int next = 0;                 // the ring's position, as a slot index
+};
+
+static pn_prefetch_state pn_prefetch[GGML_CUDA_MAX_DEVICES];
+static const bool pn_prefetch_stats = getenv("GGML_CUDA_PN_PREFETCH_STATS") != nullptr;
+static uint64_t pn_prefetch_issues = 0;
+static uint64_t pn_prefetch_takes = 0;
+static uint64_t pn_prefetch_inline = 0;
+
+static bool ggml_cuda_pn_batched_mul_mat(const ggml_tensor * node) {
+    return node->op == GGML_OP_MUL_MAT &&
+           (node->src[0]->type == GGML_TYPE_PN3T || node->src[0]->type == GGML_TYPE_PN4T) &&
+           node->src[1]->type == GGML_TYPE_F32 && node->src[1]->ne[1] >= 5 &&
+           node->src[1]->ne[2] == 1 && node->src[1]->ne[3] == 1 && ggml_is_contiguously_allocated(node->src[0]);
+}
+
+// A batched PN node that ggml_cuda_pn_h2_sm60_applies takes is prefetched as fp16 operands; the consumer runs the same GEMM
+// on them, so the choice is made once, here, from the node's own shape.
+static bool ggml_cuda_pn_h2_f16_node(const ggml_tensor * node) {
+    const ggml_tensor * src0 = node->src[0];
+    const ggml_tensor * src1 = node->src[1];
+    // the route of the h2 branch in ggml_cuda_mul_mat_cublas_impl: F32 2D operands, and the chunked GEMM
+    // (GGML_CUDA_PREFILL_CHUNK_GEMM, ne11 > 1024) is not taken ahead of it
+    static const bool chunk_gemm = getenv("GGML_CUDA_PREFILL_CHUNK_GEMM") != nullptr;
+    if (node->type != GGML_TYPE_F32 || src1->type != GGML_TYPE_F32 || src1->ne[2] != 1 || src1->ne[3] != 1 ||
+        !ggml_is_contiguous(src1) || (chunk_gemm && src1->ne[1] > 1024)) {
+        return false;
+    }
+    // m is dst->ne[0] (= src0->ne[1]), n is dst->ne[1] (= src1->ne[1])
+    return ggml_cuda_pn_h2_sm60_applies(src0->type, src0->name, node->ne[0], src1->ne[1], src1->ne[0],
+                                        src0->ne[0], src1->ne[0], node->ne[0]);
+}
+
+static bool pn_prefetch_free(const pn_prefetch_slot & sl) {
+    return sl.src == nullptr && !sl.busy;
+}
+
+static void ggml_cuda_pn_prefetch_issue(ggml_backend_cuda_context & ctx, const ggml_tensor * node) {
+    const ggml_tensor * src0 = node->src[0];
+    cudaStream_t main_stream = ctx.stream();
+    cudaStreamCaptureStatus cap = cudaStreamCaptureStatusNone;
+    if (cudaStreamIsCapturing(main_stream, &cap) != cudaSuccess || cap != cudaStreamCaptureStatusNone) {
+        return;
+    }
+    pn_prefetch_state & st = pn_prefetch[ctx.device];
+    if (st.side == nullptr) {
+        CUDA_CHECK(cudaStreamCreateWithFlags(&st.side, cudaStreamNonBlocking));
+        CUDA_CHECK(cudaEventCreateWithFlags(&st.pre, cudaEventDisableTiming));
+        for (auto & sl : st.slot) {
+            CUDA_CHECK(cudaEventCreateWithFlags(&sl.ready, cudaEventDisableTiming));
+            CUDA_CHECK(cudaEventCreateWithFlags(&sl.done, cudaEventDisableTiming));
+        }
+    }
+    const int64_t n    = ggml_nelements(src0);
+    const bool    f16  = ggml_cuda_pn_h2_f16_node(node);
+    // a chunk holds an fp32 weight, or two fp16 ones in its halves
+    const size_t  need = (size_t) ((4 * n + 511) / 512 * 512);
+    for (const auto & sl : st.slot) {
+        if (sl.src == src0->data && sl.n == n) {
+            return;
+        }
+    }
+    // the first free sub-slot from the ring's position: one fp16 half, or an even slot with its pair for an fp32 weight
+    int s = -1;
+    for (int k = 0; k < 6 && s < 0; ++k) {
+        const int c = (st.next + k) % 6;
+        if (!pn_prefetch_free(st.slot[c])) {
+            continue;
+        }
+        if (!f16) {
+            if (c % 2 == 0 && pn_prefetch_free(st.slot[c + 1])) {
+                s = c;
+            }
+        } else if (st.chunk[c / 2].cap >= need || pn_prefetch_free(st.slot[c ^ 1])) {
+            // a chunk that must grow is reallocated only while both its halves are free
+            s = c;
+        }
+    }
+    if (s < 0) {
+        return;   // nothing free: the node is taken in-line
+    }
+    const int      ck    = s / 2;
+    const int      first = f16 ? s : 2 * ck;
+    const int      count = f16 ? 1 : 2;
+    pn_prefetch_chunk & chk = st.chunk[ck];
+    for (int i = first; i < first + count; ++i) {
+        if (st.slot[i].consumed) {
+            CUDA_CHECK(cudaStreamWaitEvent(st.side, st.slot[i].done, 0));
+            st.slot[i].consumed = false;
+        }
+    }
+    if (chk.cap < need) {
+        // nothing may still read or write the old buffer
+        CUDA_CHECK(cudaStreamSynchronize(main_stream));
+        CUDA_CHECK(cudaStreamSynchronize(st.side));
+        if (chk.buf != nullptr) {
+            CUDA_CHECK(cudaFree(chk.buf));
+            chk.buf = nullptr;
+            chk.cap = 0;
+        }
+        // not the pool: its destructor asserts that it is empty, and these buffers live until the process exits
+        if (cudaMalloc(&chk.buf, need) != cudaSuccess) {
+            (void) cudaGetLastError();
+            chk.buf = nullptr;
+            return;
+        }
+        chk.cap = need;
+    }
+    CUDA_CHECK(cudaEventRecord(st.pre, main_stream));
+    CUDA_CHECK(cudaStreamWaitEvent(st.side, st.pre, 0));
+    if (f16) {
+        ggml_cuda_pn_to_fp16(src0->type, src0->data, (half *) ((char *) chk.buf + (s % 2) * (chk.cap / 2)), n, st.side);
+    } else {
+        ggml_get_to_fp32_cuda(src0->type)(src0->data, (float *) chk.buf, n, st.side);
+    }
+    CUDA_CHECK(cudaEventRecord(st.slot[first].ready, st.side));
+    pn_prefetch_slot & lo = st.slot[first];
+    lo.src   = src0->data;
+    lo.n     = n;
+    lo.chunk = ck;
+    lo.half  = s % 2;
+    lo.f16   = f16;
+    if (!f16) {
+        st.slot[first + 1].busy = true;
+    }
+    st.next = (first + count) % 6;
+    if (pn_prefetch_stats) {
+        ++pn_prefetch_issues;
+        fprintf(stderr, "pn-prefetch issue=%llu take=%llu inline=%llu\n",
+                (unsigned long long) pn_prefetch_issues, (unsigned long long) pn_prefetch_takes,
+                (unsigned long long) pn_prefetch_inline);
+    }
+}
+
+struct pn_prefetch_hit {
+    const void * buf   = nullptr;  // the prefetched operands of src0, or nullptr
+    bool         f16   = false;
+    int          slot  = -1;       // its first sub-slot
+    int          count = 0;        // the sub-slots it holds: two for a whole-chunk fp32 weight, else one
+};
+
+// The prefetched operands of src0, if any. The caller's stream waits for the dequant before it reads them.
+static pn_prefetch_hit ggml_cuda_pn_prefetch_take(ggml_backend_cuda_context & ctx, const ggml_tensor * src0) {
+    pn_prefetch_state & st = pn_prefetch[ctx.device];
+    for (int i = 0; i < 6; ++i) {
+        auto & sl = st.slot[i];
+        if (sl.src != nullptr && sl.src == src0->data && sl.n == ggml_nelements(src0)) {
+            CUDA_CHECK(cudaStreamWaitEvent(ctx.stream(), sl.ready, 0));
+            sl.src = nullptr;
+            sl.consumed = true;
+            const int count = sl.f16 ? 1 : 2;
+            if (count == 2) {
+                st.slot[i + 1].busy     = false;
+                st.slot[i + 1].consumed = true;
+            }
+            const pn_prefetch_chunk & chk = st.chunk[sl.chunk];
+            const void * buf = sl.f16 ? (const void *) ((const char *) chk.buf + sl.half * (chk.cap / 2)) : chk.buf;
+            if (pn_prefetch_stats) {
+                ++pn_prefetch_takes;
+                fprintf(stderr, "pn-prefetch issue=%llu take=%llu inline=%llu\n",
+                        (unsigned long long) pn_prefetch_issues, (unsigned long long) pn_prefetch_takes,
+                        (unsigned long long) pn_prefetch_inline);
+            }
+            return { buf, sl.f16, i, count };
+        }
+    }
+    if (pn_prefetch_stats) {
+        ++pn_prefetch_inline;
+        fprintf(stderr, "pn-prefetch issue=%llu take=%llu inline=%llu\n",
+                (unsigned long long) pn_prefetch_issues, (unsigned long long) pn_prefetch_takes,
+                (unsigned long long) pn_prefetch_inline);
+    }
+    return {};
+}
+
+static void ggml_cuda_pn_prefetch_consumer_done(ggml_backend_cuda_context & ctx, int slot, int count) {
+    if (slot >= 0) {
+        for (int i = slot; i < slot + count; ++i) {
+            CUDA_CHECK(cudaEventRecord(pn_prefetch[ctx.device].slot[i].done, ctx.stream()));
+        }
+    }
+}
+
+// SWIGLU pair epilogue (ggml_cuda_try_pn_glu): while the second GEMM of a gate/up pair runs, the h2 route of its dst writes
+// silu(gate) * up to the GLU's dst instead of its own, if it takes the route; consumed says it did.
+struct pn_glu_request {
+    const ggml_tensor * dst    = nullptr;  // the second GEMM (the route checks its dst)
+    const float *       other  = nullptr;  // the first GEMM's fp32 result
+    float *             out    = nullptr;  // the GLU's dst
+    bool                mine_is_gate = false;
+    bool                consumed     = false;
+};
+static pn_glu_request pn_glu_req;
+
+// PN prefetch look-ahead of the batched PN node at i: the next three batched PN nodes' weights are dequantized on the side
+// stream. Repeated look-ahead is suppressed by the slot membership check.
+static void ggml_cuda_pn_prefetch_lookahead(ggml_backend_cuda_context & ctx, const ggml_cgraph * cgraph, int i) {
+    if (!ggml_cuda_pn_batched_mul_mat(cgraph->nodes[i])) {
+        return;
+    }
+    int ahead = 0;
+    for (int j = i + 1; j < cgraph->n_nodes; ++j) {
+        if (ggml_cuda_pn_batched_mul_mat(cgraph->nodes[j])) {
+            ggml_cuda_pn_prefetch_issue(ctx, cgraph->nodes[j]);
+            if (++ahead == 3) { break; }
+        }
+    }
+}
+
 template<ggml_type compute_type>
 static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     using traits = batched_mul_mat_traits<compute_type>;
@@ -1601,8 +1838,43 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
     bool is_src0_cont_2 = ggml_is_contiguous_2(src0);
     bool is_src1_cont_2 = ggml_is_contiguous_2(src1);
 
+    // PN prefetch: weights already dequantized on the side stream (see ggml_cuda_pn_prefetch_issue)
+    const float * pn_pf_ptr = nullptr;
+    int pn_pf_slot = -1;
+    int pn_pf_count = 0;
+    if constexpr (std::is_same_v<cuda_t, float>) {
+        if (src0->type != compute_type) {
+            const pn_prefetch_hit pf = ggml_cuda_pn_prefetch_take(ctx, src0);
+            if (pf.f16) {
+                // Convert the h2 activation to transposed fp16 once so each CTA can stage it in wide rows.
+                ggml_cuda_pool_alloc<half> b16(ctx.pool(), ggml_cuda_pn_h2_b_elems(dst->ne[0], ne11, ne10));
+                ggml_cuda_pn_b_to_fp16(main_stream, (const float *) src1->data, b16.get(), dst->ne[0], ne11, ne10);
+                const int pn_h2_seg = ggml_cuda_pn_h2_sm60_seg(src0->name);
+                if (pn_glu_req.dst == dst) {
+                    ggml_cuda_pn_h2_sm60_glu_f16(main_stream, (const half *) pf.buf, b16.get(), pn_glu_req.other, pn_glu_req.out,
+                                                 pn_glu_req.mine_is_gate, ne01, ne11, ne10, pn_h2_seg);
+                    pn_glu_req.consumed = true;
+                } else {
+                    ggml_cuda_pn_h2_sm60_f16(main_stream, (const half *) pf.buf, b16.get(), (float *) dst->data,
+                                             ne01, ne11, ne10, pn_h2_seg);
+                }
+                ggml_cuda_pn_prefetch_consumer_done(ctx, pf.slot, pf.count);
+                return;
+            }
+            pn_pf_ptr = (const float *) pf.buf;
+            pn_pf_slot = pf.slot;
+            pn_pf_count = pf.count;
+        }
+    }
+
     if (src0->type == compute_type) {
         src0_ptr = (const cuda_t *) src0->data;
+    } else if (pn_pf_ptr != nullptr) {
+        src0_ptr = (const cuda_t *) pn_pf_ptr;
+        const size_t src0_bs = ggml_blck_size(src0->type);
+        s01 *= src0_bs;
+        s02 *= src0_bs;
+        s03 *= src0_bs;
     } else {
         src0_alloc.alloc(ggml_nelements(src0));
 
@@ -1733,6 +2005,9 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
         static const int chunk_streams = getenv("GGML_CUDA_PREFILL_CHUNK_STREAMS") != nullptr
             ? atoi(getenv("GGML_CUDA_PREFILL_CHUNK_STREAMS")) : 0;
         constexpr int64_t chunk_n = 1024;
+        // PN tier sink split (ggml_cuda_pn_sink_split_seg): the route below runs columns 0..ne11_c-1, and the tier runs the rest
+        const int pn_sink_seg = ggml_cuda_pn_sink_split_seg(src0->type, src0->name, ne01, ne11, ne10, s01, s11, ne0);
+        const int64_t ne11_c  = pn_sink_seg != 0 ? PN_TIER_SINK_COLS : ne11;
         if (chunk_gemm && ne11 > chunk_n && is_src1_cont_2) {
             const int64_t n_full = ne11 / chunk_n;
             const int64_t n_rem  = ne11 - n_full*chunk_n;
@@ -1844,13 +2119,39 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
                                 (const float *) beta,  (float *) dst_ptr + c*ne0, ne0));
                 }
             }
+        } else if (ggml_cuda_pn_h2_sm60_applies(src0->type, src0->name, ne01, ne11_c, ne10, s01, s11, ne0)) {
+            // Depth-gated half2 GEMM for the last blocks' batched PN MUL_MAT (K/V projections keep the chain).
+            ggml_cuda_pool_alloc<half> b16(ctx.pool(), ggml_cuda_pn_h2_b_elems(ne01, ne11_c, ne10));
+            ggml_cuda_pn_b_to_fp16(main_stream, (const float *) src1_ptr, b16.get(), ne01, ne11_c, ne10);
+            const int pn_h2_seg = ggml_cuda_pn_h2_sm60_seg(src0->name);
+            if (pn_glu_req.dst == dst) {
+                ggml_cuda_pn_h2_sm60_glu(main_stream, (const float *) src0_ptr, b16.get(), pn_glu_req.other, pn_glu_req.out,
+                                         pn_glu_req.mine_is_gate, ne01, ne11_c, ne10, pn_h2_seg);
+                pn_glu_req.consumed = true;
+            } else {
+                ggml_cuda_pn_h2_sm60(main_stream, (const float *) src0_ptr, b16.get(), (float *) dst_ptr, ne01, ne11_c, ne10, pn_h2_seg);
+            }
+        } else if (ggml_cuda_pn_gemm_sm60_applies(src0->type, ne01, ne11_c, ne10, s01, s11, ne0)) {
+            // PN weights at m = 5120, n = 512: the exact-order wave-filling kernel (bit-identical to the cuBLAS chain).
+            ggml_cuda_pn_gemm_sm60(main_stream, (const float *) src0_ptr, (const float *) src1_ptr, (float *) dst_ptr,
+                                   ne01, ne11_c, ne10);
+        } else if (ggml_cuda_pn_cublaslt_sm60(main_stream, src0->type, (const float *) src0_ptr, (const float *) src1_ptr,
+                                              (float *) dst_ptr, ne01, ne11_c, ne10, s01, s11, ne0)) {
+            // PN weights at m >= 6144, n >= 256 (the fallback GEMMs): cuBLASLt, the same no-split-K chain as the sgemm below.
         } else {
             CUBLAS_CHECK(
                 cublasSgemm(cublas_h, CUBLAS_OP_T, CUBLAS_OP_N,
-                        ne01, ne11, ne10,
+                        ne01, ne11_c, ne10,
                         (const float *) alpha, (const float *) src0_ptr, s01,
                                                (const float *) src1_ptr, s11,
                         (const float *) beta,  (float       *)  dst_ptr, ne0));
+        }
+        if (pn_sink_seg != 0) {
+            // the sink split's tier half: columns ne11_c.. of B, transposed to fp16 on their own, into their columns of dst
+            ggml_cuda_pool_alloc<half> b16(ctx.pool(), ggml_cuda_pn_h2_b_elems(ne01, ne11 - ne11_c, ne10));
+            ggml_cuda_pn_b_to_fp16(main_stream, (const float *) src1_ptr + ne11_c * s11, b16.get(), ne01, ne11 - ne11_c, ne10);
+            ggml_cuda_pn_h2_sm60(main_stream, (const float *) src0_ptr, b16.get(), (float *) dst_ptr + ne11_c * ne0, ne01,
+                                 ne11 - ne11_c, ne10, pn_sink_seg);
         }
     } else if (ne12 == 1 && ne13 == 1) {
         CUBLAS_CHECK(
@@ -1922,6 +2223,7 @@ static void ggml_cuda_mul_mat_cublas_impl(ggml_backend_cuda_context & ctx, const
         const to_fp32_cuda_t to_fp32_cuda = ggml_get_to_fp32_cuda(traits::ggml_type_val);
         to_fp32_cuda(dst_temp.get(), dst_ddf, ne_dst, main_stream);
     }
+    ggml_cuda_pn_prefetch_consumer_done(ctx, pn_pf_slot, pn_pf_count);
 }
 
 static void ggml_cuda_mul_mat_cublas(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
@@ -4555,6 +4857,53 @@ static bool ggml_cuda_norm_emit_prepare(ggml_backend_cuda_context * cuda_ctx, gg
     return true;
 }
 
+// SWIGLU over a batched PN gate/up pair (nodes i, i+1 are the two GEMMs, i+2 the GLU reading both): the second GEMM's h2 route
+// writes silu(gate) * up straight into the GLU's dst, so neither GEMM output is read back. Each node runs as it would in the
+// node loop (the same look-ahead, then its own dispatch); when the route does not take the epilogue, the GLU runs after the GEMM.
+// Returns false, having run nothing, when the pair does not qualify. GGML_PN_GLU_OFF=1 turns the fusion off (the dev control).
+static bool ggml_cuda_try_pn_glu(ggml_backend_cuda_context & ctx, ggml_cgraph * cgraph, int i) {
+    static const bool off   = getenv("GGML_PN_GLU_OFF") != nullptr;
+    static const bool stats = getenv("GGML_CUDA_PN_GLU_STATS") != nullptr;
+    static uint64_t   fires = 0;
+    if (off || i + 2 >= cgraph->n_nodes) {
+        return false;
+    }
+    ggml_tensor * a   = cgraph->nodes[i];
+    ggml_tensor * b   = cgraph->nodes[i + 1];
+    ggml_tensor * glu = cgraph->nodes[i + 2];
+    if (!ggml_cuda_pn_batched_mul_mat(a) || !ggml_cuda_pn_batched_mul_mat(b) || glu->op != GGML_OP_GLU ||
+        ggml_get_glu_op(glu) != GGML_GLU_OP_SWIGLU || ggml_get_op_params_i32(glu, 1) != 0) {
+        return false;
+    }
+    if (!((glu->src[0] == a && glu->src[1] == b) || (glu->src[0] == b && glu->src[1] == a))) {
+        return false;
+    }
+    if (!ggml_can_fuse_subgraph(cgraph, i, { GGML_OP_MUL_MAT, GGML_OP_MUL_MAT, GGML_OP_GLU }, { i + 2 })) {
+        return false;
+    }
+    if (a->type != GGML_TYPE_F32 || b->type != GGML_TYPE_F32 || glu->type != GGML_TYPE_F32 ||
+        !ggml_are_same_shape(a, b) || !ggml_are_same_shape(a, glu) ||
+        !ggml_is_contiguous(a) || !ggml_is_contiguous(b) || !ggml_is_contiguous(glu)) {
+        return false;
+    }
+
+    ggml_cuda_pn_prefetch_lookahead(ctx, cgraph, i);
+    GGML_ASSERT(ggml_cuda_compute_forward(ctx, a));
+    ggml_cuda_pn_prefetch_lookahead(ctx, cgraph, i + 1);
+
+    pn_glu_req = { b, (const float *) a->data, (float *) glu->data, glu->src[0] == b, false };
+    GGML_ASSERT(ggml_cuda_compute_forward(ctx, b));
+    const bool fused = pn_glu_req.consumed;
+    pn_glu_req = {};
+    if (!fused) {
+        GGML_ASSERT(ggml_cuda_compute_forward(ctx, glu));
+    } else if (stats) {
+        ++fires;
+        fprintf(stderr, "pn-glu fused=%llu\n", (unsigned long long) fires);
+    }
+    return true;
+}
+
 static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, int i,
                               bool allow_defer) {
 
@@ -4564,6 +4913,10 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
     }
 
     ggml_tensor * node = cgraph->nodes[i];
+
+    if (node->op == GGML_OP_MUL_MAT && ggml_cuda_try_pn_glu(*cuda_ctx, cgraph, i)) {
+        return 2;
+    }
 
     if (node->op == GGML_OP_MUL) {
         ggml_cuda_moe_weighted_reduction_match match;
@@ -5662,6 +6015,12 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
 #else
                 GGML_UNUSED(integrated);
 #endif  // NDEBUG
+
+                // PN prefetch: while this batched PN node runs, the next three batched PN nodes' weights are dequantized
+                // on the side stream. A fp32 weight with no free chunk is not prefetched (the ring holds three chunks);
+                // h2 operands use the fp16 halves, so their look-ahead is the full three. Repeated look-ahead is
+                // suppressed by the slot membership check.
+                ggml_cuda_pn_prefetch_lookahead(*cuda_ctx, cgraph, i);
 
                 bool ok = ggml_cuda_compute_forward(*cuda_ctx, node);
                 if (!ok) {
@@ -7133,6 +7492,9 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     if (strcmp(name, "ggml_backend_cuda_fusion_count") == 0) {
         return (void *)ggml_backend_cuda_fusion_count;
     }
+    if (strcmp(name, "ggml_backend_cuda_pn_h2_set_ubatch") == 0) {
+        return (void *)ggml_cuda_pn_tier_set_ubatch;
+    }
     return nullptr;
 }
 
@@ -7212,6 +7574,19 @@ ggml_backend_t ggml_backend_cuda_init(int device) {
     if (ctx == nullptr) {
         GGML_LOG_ERROR("%s: failed to allocate context\n", __func__);
         return nullptr;
+    }
+
+    // The compute stream (stream 0) runs at the greatest priority the device offers. The PN prefetch's side-stream
+    // dequant keeps the default (the least), so a batched PN GEMM is dispatched ahead of the dequant blocks queued with it.
+    {
+        int least_priority = 0;
+        int greatest_priority = 0;
+        ggml_cuda_set_device(device);
+        if (cudaDeviceGetStreamPriorityRange(&least_priority, &greatest_priority) != cudaSuccess ||
+            cudaStreamCreateWithPriority(&ctx->streams[device][0], cudaStreamNonBlocking, greatest_priority) != cudaSuccess) {
+            (void) cudaGetLastError();
+            ctx->streams[device][0] = nullptr; // created on first use, at the default priority
+        }
     }
 
     ggml_backend_t cuda_backend = new ggml_backend {

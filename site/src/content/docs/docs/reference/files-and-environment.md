@@ -53,7 +53,7 @@ The install script, `https://tensorless.dev/install.sh`, reads:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TENSORLESS_VERSION` | `0.1.0` | The launcher release to install. Letters, digits, `.` and `-` only. |
+| `TENSORLESS_VERSION` | `0.2.0` | The launcher release to install. Letters, digits, `.` and `-` only. |
 | `TENSORLESS_INSTALL_DIR` | `$HOME/.local/bin` | Where to put the `tensorless` binary. Created if missing. |
 
 It downloads `tensorless-<version>-<platform>.tar.gz` and its `.sha256` from the GitHub release, checks the sha256 with `sha256sum` or `shasum -a 256`, and installs one file, the binary. Platforms: Linux x86_64 (`linux-x86_64`), Linux aarch64 (`linux-aarch64`) and macOS on Apple silicon (`macos-arm64`). It needs `curl` or `wget`, and `sha256sum` or `shasum`.

@@ -6,14 +6,14 @@ sidebar:
   order: 3
 ---
 
-A launch target is one recipe: one model on one card, released after its image was measured on that card. tensorless v0.1.0 has two, both on the NVIDIA Tesla P100 16 GB and both on `engine-v0.1.0`.
+A launch target is one recipe: one model on one card, released after its image was measured on that card. tensorless v0.2.0 has two, both on the NVIDIA Tesla P100 16 GB and both on `engine-v0.2.0`.
 
 | Launch command | Short name | Decode, published image | Decode, research receipt |
 |---|---|---:|---:|
-| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | `pn3` | **30.03 tok/s** | 30.06 tok/s |
-| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | `q3floor` | **26.18 tok/s** | 26.26 tok/s |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | `pn3` | **30.48 tok/s** | 30.43 tok/s |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | `q3floor` | **26.69 tok/s** | 26.53 tok/s |
 
-Both decode numbers are greedy, single-stream, at short context. "Published image" is `tensorless bench` on the released image: the median of 3 runs of 256 tokens after a 429-token prompt, on one Tesla P100-PCIE-16GB. "Research receipt" is the decode hill climb's judge on a source build of the same engine commit: 256 tokens after a cold prompt of about 600 tokens. The full measurements are in [Receipts](receipts.md).
+Both decode numbers are greedy, single-stream, at short context. "Published image" is `tensorless bench` on the released image: the median of 3 runs of 256 tokens after a 429-token prompt, on one Tesla P100-PCIE-16GB. "Research receipt" is the hill climb's judge on a source build of the engine's research commit: 256 tokens after a cold prompt of about 600 tokens. The full measurements are in [Receipts](receipts.md).
 
 `tensorless models` lists the recipes your launcher knows, and `tensorless info MODEL` shows any of them in full.
 
@@ -31,16 +31,18 @@ Qwen3.8-27B in PN, the P100-native 3-bit weight format of this engine (mix P0k+1
 | sha256 | `15ce2d4469673f1f1753c55de3780cfe04311dd6f05cb41633d73df128e91476` |
 | License | Apache-2.0 (from Qwen/Qwen3.8-27B) |
 | Card | `p100`: compute capability 6.0, at least 16,000 MiB, driver 525.60.13 or newer |
-| Engine release | `engine-v0.1.0`, `sm60` |
-| Image | `ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7` (tag `0.1.0-sm60`) |
+| Engine release | `engine-v0.2.0`, `sm60` |
+| Image | `ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7` (tag `0.2.0-sm60`) |
 | Context | 65,536 tokens, q4_0 KV cache |
 | Recipe | [`recipes/iamMrDuncan/Qwen3.8-27B-PN3-GGUF/p100.toml`](https://github.com/iammrduncan/tensorless/blob/main/recipes/iamMrDuncan/Qwen3.8-27B-PN3-GGUF/p100.toml) |
 
 | Measure | Value | Scope |
 |---|---:|---|
-| Decode, published image | 30.03 tok/s | `tensorless bench`, median of 3 runs, 256 tokens after a 429-token prompt |
-| Decode, short context | 30.06 tok/s | research receipt; code prompt (prose: 30.18) |
-| Prefill, about 4,100 tokens | 121.4 tok/s | research receipt; code prompt (prose: 119.6) |
+| Decode, published image | 30.48 tok/s | `tensorless bench`, median of 3 runs, 256 tokens after a 429-token prompt |
+| Time to first token, published image | 2.60 s | the same runs, 429-token prompt (engine-v0.1.0: 4.46 s) |
+| Prefill, published image | 198.9 tok/s | one cold prompt of 3,744 tokens, code (prose, 4,657 tokens: 201.5) |
+| Decode, short context | 30.43 tok/s | research receipt; code prompt (prose: 30.31) |
+| Prefill, about 4,100 tokens | 200.1 tok/s | research receipt; code prompt (prose: 198.9). engine-v0.1.0: 121.4 |
 | Decode at 32K and 65K | not measured on this engine | |
 
 ## Qwen3.8-27B-UD-IQ3_XXS-Q3Floor
@@ -58,16 +60,18 @@ Unsloth's Qwen3.8-27B UD-IQ3_XXS with a 3-bit floor: its 91 sub-3-bit tensors re
 | sha256 | `4b4d6a39dca07c915472b3fdf70267385f6e6f3f38befd5223c9a1ac272cecd0` |
 | License | Apache-2.0 (from Qwen/Qwen3.8-27B and unsloth/Qwen3.8-27B-GGUF) |
 | Card | `p100`: compute capability 6.0, at least 16,000 MiB, driver 525.60.13 or newer |
-| Engine release | `engine-v0.1.0`, `sm60` |
-| Image | `ghcr.io/iammrduncan/tensorless-engine@sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7` (tag `0.1.0-sm60`) |
+| Engine release | `engine-v0.2.0`, `sm60` |
+| Image | `ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7` (tag `0.2.0-sm60`) |
 | Context | 65,536 tokens, q4_0 KV cache |
 | Recipe | [`recipes/iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF/p100.toml`](https://github.com/iammrduncan/tensorless/blob/main/recipes/iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF/p100.toml) |
 
 | Measure | Value | Scope |
 |---|---:|---|
-| Decode, published image | 26.18 tok/s | `tensorless bench`, median of 3 runs, 256 tokens after a 429-token prompt |
-| Decode, short context | 26.26 tok/s | research receipt on this engine commit; code prompt (prose: 26.27) |
-| Decode at 32K / 65K | 24.52 / 22.92 tok/s | research receipt on the climb's starting commit; 1,024 tokens after a 31.7K / 64.5K-token prompt, code (prose: 24.54 / 22.97) |
+| Decode, published image | 26.69 tok/s | `tensorless bench`, median of 3 runs, 256 tokens after a 429-token prompt |
+| Time to first token, published image | 3.86 s | the same runs, 429-token prompt |
+| Prefill, published image | 144.7 tok/s | one cold prompt of 3,744 tokens, code (prose, 4,657 tokens: 148.4) |
+| Decode, short context | 26.53 tok/s | research receipt on this engine's research commit; code prompt (prose: 26.58) |
+| Decode at 32K / 65K | 24.52 / 22.92 tok/s | research receipt on the decode climb's starting commit, two engine releases back; 1,024 tokens after a 31.7K / 64.5K-token prompt, code (prose: 24.54 / 22.97) |
 
 ## Settings both recipes share
 
@@ -93,4 +97,4 @@ Both recipes run the same image with the same arguments and the same 21 [engine 
 | `threads_max` | 8 |
 | `min_driver` | 525.60.13 |
 
-The model and its 65,536-token context take most of the card's 16 GB: the published image used 13,997 MiB idle and 14,577 MiB generating with Qwen3.8-27B-PN3, and 13,157 / 13,737 MiB with Q3Floor.
+The model and its 65,536-token context take most of the card's 16 GB: the published image used 14,139 MiB idle and 15,383 MiB after its first prompt with Qwen3.8-27B-PN3, and 13,289 / 13,869 MiB with Q3Floor.

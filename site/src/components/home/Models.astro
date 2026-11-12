@@ -53,7 +53,7 @@ const cards = recipes
             <p class="what small">{c.what}</p>
             <dl>
               <div><dt>decode, published image</dt><dd><b>{c.measured.toFixed(2)} tok/s</b></dd></div>
-              <div><dt>32K / 65K</dt><dd>{c.receipt.ctx_32k ? `${c.receipt.ctx_32k} / ${c.receipt.ctx_65k} tok/s, on the climb's starting commit` : "not measured yet"}</dd></div>
+              <div><dt>32K / 65K</dt><dd>{c.receipt.ctx_32k ? `${c.receipt.ctx_32k} / ${c.receipt.ctx_65k} tok/s, on the decode climb's starting commit` : "not measured yet"}</dd></div>
               <div><dt>file</dt><dd>{c.size} GiB</dd></div>
               <div><dt>read per token</dt><dd>{c.perToken} GiB</dd></div>
               <div><dt>weight types</dt><dd class="mono">{c.types}</dd></div>

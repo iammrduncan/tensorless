@@ -1,21 +1,32 @@
-# Engine provenance: engine-v0.1.0
+# Engine provenance: engine-v0.2.0
 
-This directory is the tensorless engine at release **engine-v0.1.0**: a fork of llama.cpp for the NVIDIA Tesla P100 (sm_60), exported from the research repository where its kernels were developed and hill-climbed.
+This directory is the tensorless engine at release **engine-v0.2.0**: a fork of llama.cpp for the NVIDIA Tesla P100 (sm_60), exported from the research repository where its kernels were developed and hill-climbed.
 
 | Item | Value |
 |---|---|
 | Upstream base | [JakeATX/llamAmpere](https://github.com/JakeATX/llamAmpere) `2cb16936b5d081a92f1d0369954561efb6d1e2c7` (MIT), itself a fork of [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant) and [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) |
-| Research commit | `cfcab96e55d0827055c4b6cb2e8957dc0ebba712` |
-| Files changed from the upstream base | 55 |
-| Tree digest | `d6a8a4403918fe7abd1e00374245c7114107c23d808ca6bd7a99a36025e52176` (sha256 over sorted relative paths and contents) |
+| Research commit | `df673571ed7238d2fe30d4b8355d7707d6672054` (git tree `ee5aa3a361b47887dcaeef60316b6bf29a80a947`) |
+| Previous release | engine-v0.1.0, research commit `cfcab96e55d0827055c4b6cb2e8957dc0ebba712` |
+| Files changed from the upstream base | 64 |
+| Files changed from engine-v0.1.0 | 17 (15 changed, 2 new: `ggml/src/ggml-cuda/pn-gemm-sm60.cu` and `.cuh`) |
+| Tree digest | `9cd1f0e028121d1be0c45848efb0403a28299d7825b4f09be6c40976e8d1c9b5` (sha256 over sorted relative paths and contents; `b44cc91baf8c6c03aebfd53c9757cb06b42d633701810f5f1eefa5d721f6e7cb` as exported, before the fix below) |
 
 ## What this fork adds
 
 - **P100 decode kernels** (opt-in through `GGML_CUDA_*` switches): split-KV q4_0 flash-decoding attention (`fattn-sm60`), sm_60 quantized GEMVs and an IQ3_XXS fp16-table GEMV (`mmvh-sm60`, `mmvq` paths), Q3_K/Q4_K/Q6_K and output-head kernels, prefill dequantization and chunked GEMM, norm fusions, and the Qwen3.5-architecture graph changes they need.
 - **The PN weight types** `pn3t` (124) and `pn4t` (125), with their CPU reference, CUDA dequantization and sm_60 GEMV kernels (`ggml-cuda/pn-sm60.cu`). The format is specified in tensorless `docs/pn-format.md`.
+- **The PN prefill path** (new in this release, on by default; `ggml-cuda/pn-gemm-sm60.cu`): what a batched PN `MUL_MAT` (more than 4 tokens, so every prompt ubatch) runs instead of dequantize-to-fp32 plus cuBLAS SGEMM.
+  - An exact-order fp32 GEMM for the m = 5120 and 12288 shapes, and a cuBLASLt route for the other large shapes. Both give the same bits as the cuBLAS call they replace.
+  - A half2 (fp16) GEMM with fp32 accumulation across windows for the weights of blocks 31 and up, except `attn_k` and `attn_v`, and a shorter-chain precision tier for blocks 27 to 30 in the ubatches that are neither a prompt's first 512 tokens nor its final ubatch.
+  - Vectorized PN dequantization, to fp32 and to fp16, prefetched on a side stream while the previous GEMM runs.
+  - A fused SwiGLU epilogue for the FFN gate/up pair, and smaller changes to concat, RMS norm, the gated delta net and the flash-attention tile on the batched path.
+  - In `llama_context::decode`, two consecutive prompt batches with no outputs run as one ubatch of up to twice `n_ubatch` tokens.
+  - For T = 1 decode, `ssm_beta` and `ssm_alpha` load as views of one tensor and run as one GEMV.
 - `tools/tf-logits` (teacher-forced logits) and `tests/test-pn-format.cpp`.
 
-The PN kernels at this release are the result of an automated decode hill climb: 131 judged attempts, 28 confirmed improvements, PN3M19 decode on one P100 from 7.74 to about 30 tok/s at short context, with every step's numerics held against its starting point.
+The PN kernels are the result of two automated hill climbs, each holding the model's numerics against its starting point:
+- **Decode** (engine-v0.1.0): 131 judged attempts, 28 confirmed improvements, PN3M19 decode on one P100 from 7.74 to about 30 tok/s at short context.
+- **Prefill** (this release): 369 attempts, 26 promoted improvements, PN3M19 prefill on one P100 from 121.4 to 200.1 tok/s on a cold prompt of about 4,100 tokens, with the decode held within 1% of its starting point.
 
 ## What the export changed
 
@@ -28,6 +39,12 @@ Comment lines that pointed into the private research repository were rewritten, 
 - `ggml/src/ggml-cuda/pn-sm60.cu:3`
 - `ggml/src/ggml-quants.c:169`
 - `tests/test-pn-format.cpp:3`
+
+## Changed after the export
+
+One fix was made in this repository, on top of the exported research commit. It is not part of what the hill climb's judge measured:
+
+- **A held prompt batch reported the wrong minimum position** (`src/llama-context.cpp`, with `seq_pos_min_is_last()` in `src/llama-memory.h`, `llama-memory-recurrent.h`, `llama-memory-hybrid.h` and `llama-memory-hybrid-iswa.h`). While `llama_context::decode` holds a prompt batch, `llama_memory_seq_pos_min` has to answer for it. It answered with the batch's first position. A memory with a recurrent state reports its last position there, and `llama-server` records its context checkpoints with that value, so a checkpoint came out one token short. The next request that reused the prompt cache then asked for a rollback the recurrent state cannot do, and the server aborted with `failed to remove sequence`. The judge sent every prompt with `cache_prompt` false, so no judged run reached it. The fix reports the position the memory will report once the batch is applied.
 
 The upstream license is in `LICENSE`; tensorless's own changes are Apache-2.0 (see the repository's `NOTICE`).
 
