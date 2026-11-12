@@ -134,6 +134,10 @@ struct llama_memory_i {
     virtual llama_pos seq_pos_min(llama_seq_id seq_id) const = 0;
     virtual llama_pos seq_pos_max(llama_seq_id seq_id) const = 0;
 
+    // true when seq_pos_min is the sequence's last position: a recurrent state holds only its newest token, so a
+    // memory with one (recurrent, hybrid) reports min == max. held_pos needs it to say what a held batch will leave.
+    virtual bool seq_pos_min_is_last() const { return false; }
+
     virtual std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const = 0;
 
     //

@@ -68,6 +68,7 @@ public:
     void seq_div (llama_seq_id seq_id,                              llama_pos p0, llama_pos p1, int d) override;
 
     llama_pos seq_pos_min(llama_seq_id seq_id) const override;
+    bool seq_pos_min_is_last() const override { return true; }
     llama_pos seq_pos_max(llama_seq_id seq_id) const override;
 
     std::map<ggml_backend_buffer_type_t, size_t> memory_breakdown() const override;

@@ -542,8 +542,12 @@ llama_context::llama_context(
             if (h_max < 0) {
                 return;
             }
-            p_min = p_min < 0 ? h_min : std::min(p_min, h_min);
             p_max = std::max(p_max, h_max);
+            // report what the memory will report once the held batch is applied. A recurrent state keeps only its newest
+            // position, so there the minimum is the held batch's last position, not its first: the server records its
+            // context checkpoints with these two values, and a minimum below the maximum made a restored checkpoint
+            // resume one token early, at a position the recurrent state cannot be rolled back to.
+            p_min = memory->seq_pos_min_is_last() ? p_max : (p_min < 0 ? h_min : std::min(p_min, h_min));
         };
     }
 
