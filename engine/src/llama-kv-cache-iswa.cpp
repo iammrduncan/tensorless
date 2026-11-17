@@ -70,7 +70,10 @@ llama_kv_cache_iswa::llama_kv_cache_iswa(
 
     // note: the SWA cache is always padded to 256 for performance
     //       https://github.com/ggml-org/llama.cpp/issues/17037
-    uint32_t size_swa = GGML_PAD(std::min(size_base, hparams.n_swa*(unified ? n_seq_max : 1) + n_ubatch), 256);
+    // a decode call can pair two ubatches into one batch, so the window needs room for two of them:
+    // with room for one, a long prompt finds no free cells once the window is full, and the
+    // server goes on from a stale position
+    uint32_t size_swa = GGML_PAD(std::min(size_base, hparams.n_swa*(unified ? n_seq_max : 1) + 2*n_ubatch), 256);
 
     // when using full-size SWA cache, we set the SWA cache size to be equal to the base cache size
     if (swa_full) {
