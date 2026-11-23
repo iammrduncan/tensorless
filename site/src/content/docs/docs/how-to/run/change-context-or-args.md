@@ -6,7 +6,7 @@ sidebar:
   order: 4
 ---
 
-Each recipe runs `llama-server` with exactly the settings that were measured, including a context of 65,536 tokens. You can change the context length, or add `llama-server` arguments of your own. The launcher then calls the run **untuned**: it is no longer the configuration the receipt measured, so the receipt's numbers don't apply to it.
+Each recipe runs `llama-server` with exactly the settings that were measured, including its context: 65,536 tokens for the Qwen3.8-27B recipes, 36,864 for North-Mini-Code-1.0. You can change the context length, or add `llama-server` arguments of your own. The launcher then calls the run **untuned**: it is no longer the configuration the receipt measured, so the receipt's numbers don't apply to it.
 
 You need the launcher installed and a host that passes `tensorless doctor`. See [Prepare a Linux host for a P100](../setup/prepare-host.md). Words such as *recipe* and *receipt* are in the [glossary](../../reference/glossary.md).
 
@@ -35,7 +35,7 @@ UNTUNED: --context 32768 instead of 65536. This is not the configuration the rec
 The value goes to `llama-server` as `-c`. With `-np 1` in the recipes, the server has one slot, and that slot gets the whole context.
 
 :::caution
-The recipes' 65,536-token context already takes nearly all of the P100's 16 GB: with Qwen3.8-27B-PN3, the published image used 14,139 MiB once loaded and 15,383 MiB after its first prompt ([the receipt](../../reference/receipts.md)). A larger context needs more memory than the card has, and the server fails while it loads. A smaller one frees memory.
+The Qwen3.8-27B recipes' 65,536-token context already takes nearly all of the P100's 16 GB: with Qwen3.8-27B-PN3, the published image used 14,139 MiB once loaded and 15,381 MiB after its first prompt ([the receipt](../../reference/receipts.md)). North-Mini-Code-1.0 left 1,862 MiB free at its 36,864-token context. A larger context needs more memory than the card has, and the server fails while it loads. A smaller one frees memory.
 :::
 
 ## Pass extra llama-server arguments

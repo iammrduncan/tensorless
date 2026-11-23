@@ -644,40 +644,104 @@ __global__ void q6k_prep_x(const float * __restrict__ x, __half * __restrict__ y
     if (lane == 0) ys2[b] = make_float4(ldexpf(1.f, 24 - k), 32.f * ldexpf(1.f, -k) * s, 0.f, 0.f);
 }
 
+// The single-column prep of q6k_prep_x, per 16-x chunk b, written to y[16b..] and ys2[b] with the same
+// arithmetic: the same exponent k, the same half values, and the same sum order as the 16-lane shuffle
+// tree (offsets 8,4,2,1), so the fused and the separate prep give identical bits.
+__device__ __forceinline__ void q6k_prep_chunks(const float * __restrict__ x, __half * __restrict__ y,
+                                                float4 * __restrict__ ys2, const int nb16) {
+    for (int b = threadIdx.x; b < nb16; b += blockDim.x) {
+        float v[16];
+#pragma unroll
+        for (int j = 0; j < 4; j++) {
+            const float4 q = reinterpret_cast<const float4 *>(x + (size_t) b * 16)[j];
+            v[4*j] = q.x; v[4*j + 1] = q.y; v[4*j + 2] = q.z; v[4*j + 3] = q.w;
+        }
+        float mx = 0.f;
+#pragma unroll
+        for (int i = 0; i < 16; i++) mx = fmaxf(mx, fabsf(v[i]));
+        // e = the least e in [0, 30] with 2^e >= mx, as the separate prep's search finds it
+        int p = 0;
+        const float fm = frexpf(mx, &p);
+        const int e = min(max(fm == 0.5f ? p - 1 : p, 0), 30);
+        const int k = 15 - e;
+        // exact powers of two (k in [-15, 15]): the bit pattern is what ldexpf(1, n) returns
+        const float sc_in = __int_as_float((k + 127) << 23);
+        __half hh[16];
+        float hv[16];
+#pragma unroll
+        for (int i = 0; i < 16; i++) {
+            hh[i] = __float2half(v[i] * sc_in);
+            hv[i] = __half2float(hh[i]);
+        }
+#pragma unroll
+        for (int o = 8; o; o >>= 1) {
+#pragma unroll
+            for (int i = 0; i < 8; i++) if (i < o) hv[i] += hv[i + o];
+        }
+#pragma unroll
+        for (int i = 0; i < 16; i++) y[(size_t) b * 16 + i] = hh[i];
+        ys2[b] = make_float4(__int_as_float((24 - k + 127) << 23), 32.f * __int_as_float((127 - k) << 23) * hv[0], 0.f, 0.f);
+    }
+}
+
+template <bool FUSE>
+__device__ __forceinline__ float4 q6k_ys(const float4 * p) { return FUSE ? *p : __ldg(p); }
+
 // Weight w, sub-block j = 8h + t (y[128h + 16t + m], scale scales[j]): codes come from 16
 // consecutive ql bytes at h*64 + 16*(t%4) + m (LOW nibble for t<4, HIGH for t>=4) and 16
 // consecutive qh bytes at h*32 + 16*(t%2) + m, all with shift 2*(t/2) (verified by emulation
 // against dequantize_row_q6_K). The fold order (wq loop, shfl 4,2,1,8,16) contains no NC.
-template <int R, int NC>
-__global__ void q6k_head(const uint8_t * __restrict__ w, const __half * __restrict__ y,
-                         const float4 * __restrict__ ys2, float * __restrict__ out,
-                         const int nrows, const int nblk_x, const int ldy, const int lds) {
+// FUSE (NC=1 only): each CTA prepares the whole activation in shared memory (3 bytes per element) and
+// reads it from there, so no q6k_prep_x launch runs. The rows are the same, the arithmetic is the same.
+template <int R, int NC, bool FUSE>
+__device__ __forceinline__ void q6k_head_body(unsigned char * q6k_fused_smem, const int blk,
+                                              const uint8_t * __restrict__ w, const __half * __restrict__ y,
+                                              const float4 * __restrict__ ys2, float * __restrict__ out,
+                                              const int nrows, const int nblk_x, const int ldy, const int lds,
+                                              const float * __restrict__ x) {
     const int lane = threadIdx.x & 31, warp = threadIdx.x >> 5;
     const int t = lane & 7, g = lane >> 3;
     const int subn = t >> 2;
     const int shift2 = 2 * (t >> 1);
-    const int row0 = (blockIdx.x * 4 + warp) * R;
+    const int row0 = (blk * 4 + warp) * R;
+    const __half * yv = y;
+    const float4 * ysv = ys2;
+    if (FUSE) {
+        __half * sy = (__half *) q6k_fused_smem;
+        float4 * sys = (float4 *) (q6k_fused_smem + (size_t) 2 * nblk_x * 256);
+        q6k_prep_chunks(x, sy, sys, nblk_x * 16);
+        __syncthreads();
+        yv = sy;
+        ysv = sys;
+    }
     float acc[NC][R];
 #pragma unroll
     for (int c = 0; c < NC; c++)
 #pragma unroll
         for (int r = 0; r < R; r++) acc[c][r] = 0.f;
+    // running record pointers: row r's record for block sb is rec_r[r], and the loop moves each one 4 blocks
+    // on (224 bytes a block), so the 64-bit row*nblk_x*224 address math runs once per warp, not per step
+    const size_t  rstride = (size_t) nblk_x * 224;
+    const uint8_t * rec_r[R];
+    rec_r[0] = w + (size_t) row0 * rstride + (size_t) g * 224;
+#pragma unroll
+    for (int r = 1; r < R; r++) rec_r[r] = rec_r[r - 1] + rstride;
 #pragma unroll 1
     for (int sb = g; sb < nblk_x; sb += 4) {
         float4 et[2][NC];
         const half * xbase[2][NC];
 #pragma unroll
         for (int c = 0; c < NC; c++) {
-            et[0][c] = __ldg(ys2 + (size_t) c * lds + sb * 16 + t);
-            et[1][c] = __ldg(ys2 + (size_t) c * lds + sb * 16 + 8 + t);
-            xbase[0][c] = y + (size_t) c * ldy + sb * 256 + 16 * t;
+            et[0][c] = q6k_ys<FUSE>(ysv + (size_t) c * lds + sb * 16 + t);
+            et[1][c] = q6k_ys<FUSE>(ysv + (size_t) c * lds + sb * 16 + 8 + t);
+            xbase[0][c] = yv + (size_t) c * ldy + sb * 256 + 16 * t;
             xbase[1][c] = xbase[0][c] + 128;
         }
 #pragma unroll
         for (int r = 0; r < R; r++) {
             const int row = row0 + r;
             if (row >= nrows) break;
-            const uint8_t * rec = w + ((size_t) row * nblk_x + sb) * 224;
+            const uint8_t * rec = rec_r[r];
             const float d6 = __half2float(*(const __half *) (rec + 208));
 #pragma unroll
             for (int h = 0; h < 2; ++h) {
@@ -714,6 +778,7 @@ __global__ void q6k_head(const uint8_t * __restrict__ w, const __half * __restri
                     acc[c][r] += d6 * sc * (s4.x * hf - s4.y);
                 }
             }
+            rec_r[r] += 4 * 224;
         }
     }
 #pragma unroll
@@ -731,13 +796,104 @@ __global__ void q6k_head(const uint8_t * __restrict__ w, const __half * __restri
     }
 }
 
-static bool try_q6k(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+template <int R, int NC, bool FUSE>
+__global__ void q6k_head(const uint8_t * __restrict__ w, const __half * __restrict__ y,
+                         const float4 * __restrict__ ys2, float * __restrict__ out,
+                         const int nrows, const int nblk_x, const int ldy, const int lds,
+                         const float * __restrict__ x) {
+    extern __shared__ __align__(16) unsigned char q6k_fused_smem[];
+    q6k_head_body<R,NC,FUSE>(q6k_fused_smem, blockIdx.x, w, y, ys2, out, nrows, nblk_x, ldy, lds, x);
+}
+
+// The router (F32, 2048 columns, one row a CTA) as tail CTAs of the QKV launch. It is mul_mat_vec_f<float,float,1,256>
+// with its 256 threads run as two virtual threads per thread of this 128-thread CTA: virtual thread v sums the
+// columns 2*(v + 256k) and 2*(v + 256k) + 1 in the same order, the warp sums are the same 32-lane butterflies, and the
+// eight warp sums are reduced by one warp in the same order. Each logit is bit-identical to the stock kernel's.
+__device__ __forceinline__ void router_row_128(const float * __restrict__ rw, const float * __restrict__ act,
+                                               float * __restrict__ out, const int row, float * buf) {
+    const int tid = threadIdx.x;
+    const float2 * x2 = (const float2 *) (rw + (size_t) row * 2048);
+    const float2 * y2 = (const float2 *) act;
+    float s0 = 0.0f, s1 = 0.0f;
+#pragma unroll
+    for (int col2 = tid; col2 < 1024; col2 += 256) {
+        ggml_cuda_mad(s0, x2[col2], y2[col2]);
+    }
+#pragma unroll
+    for (int col2 = tid + 128; col2 < 1024; col2 += 256) {
+        ggml_cuda_mad(s1, x2[col2], y2[col2]);
+    }
+    s0 = warp_reduce_sum<32>(s0);
+    s1 = warp_reduce_sum<32>(s1);
+    if ((tid & 31) == 0) {
+        buf[tid >> 5]     = s0;
+        buf[4 + (tid >> 5)] = s1;
+    }
+    __syncthreads();
+    if (tid < 32) {
+        float v = tid < 8 ? buf[tid] : 0.0f;
+        v = warp_reduce_sum<32>(v);
+        if (tid == 0) {
+            out[row] = v;
+        }
+    }
+}
+
+// One launch: the first gr CTAs are the NC=1 fused QKV head (q6k_head<R,1,true>), the last nrt CTAs one router row each.
+template <int R>
+__global__ void q6k_head_router(const uint8_t * __restrict__ w, float * __restrict__ out,
+                                const int nrows, const int nblk_x, const int ldy, const int lds,
+                                const float * __restrict__ x, const float * __restrict__ rw,
+                                float * __restrict__ rout, const int gr) {
+    extern __shared__ __align__(16) unsigned char q6k_fused_smem[];
+    if (blockIdx.x >= gr) {
+        router_row_128(rw, x, rout, blockIdx.x - gr, (float *) q6k_fused_smem);
+        return;
+    }
+    q6k_head_body<R,1,true>(q6k_fused_smem, blockIdx.x, w, nullptr, nullptr, out, nrows, nblk_x, ldy, lds, x);
+}
+
+template <int R>
+static bool q6k_head_router_launch(const uint8_t * W, float * O, int64_t m, int nblk_x, int ldy, int lds,
+                                   const float * x, const float * rw, float * rout, int nrt, cudaStream_t stream) {
+    const int gr = (int) ((m + 4*R - 1) / (4*R));
+    const size_t smem = (size_t) nblk_x * 256 * 3;
+    q6k_head_router<R><<<gr + nrt, 128, smem, stream>>>(W, O, (int) m, nblk_x, ldy, lds, x, rw, rout, gr);
+    return cudaGetLastError() == cudaSuccess;
+}
+
+template <int R>
+static bool q6k_head_launch(const uint8_t * W, const __half * yh, const float4 * ys, float * O, int64_t m, int nc,
+                            int nblk_x, int ldy, int lds, const float * x, cudaStream_t stream) {
+    const int gr = (int) ((m + 4*R - 1) / (4*R));
+    if (x) {
+        // NC=1 fused: x is the activation itself, prepared in shared memory by each CTA
+        const size_t smem = (size_t) nblk_x * 256 * 3;
+        q6k_head<R,1,true><<<gr, 128, smem, stream>>>(W, nullptr, nullptr, O, (int) m, nblk_x, ldy, lds, x);
+    }
+    else if (nc == 1) q6k_head<R,1,false><<<gr, 128, 0, stream>>>(W, yh, ys, O, (int) m, nblk_x, ldy, lds, nullptr);
+    else if (nc == 2) q6k_head<R,2,false><<<gr, 128, 0, stream>>>(W, yh, ys, O, (int) m, nblk_x, ldy, lds, nullptr);
+    else return false;
+    return cudaGetLastError() == cudaSuccess;
+}
+
+// rsrc0/rdst (optional): the F32 router of the same activation, [2048 x n] weights and n logits, which runs as tail CTAs
+// of this launch. It needs the fused decode case (one column, k <= 4096), so nothing is launched when it does not hold.
+static bool try_q6k(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst,
+                    const ggml_tensor * rsrc0 = nullptr, ggml_tensor * rdst = nullptr) {
     const int64_t k = src0->ne[0], m = src0->ne[1];
     if (k % 256 != 0) return false;
     if (src0->nb[0] != ggml_type_size(src0->type) || (size_t) src0->nb[1] != ggml_row_size(src0->type, k)) return false;
     if (src1->ne[0] != k || src1->ne[2] != 1 || src1->ne[3] != 1) return false;
     if (src1->nb[0] != sizeof(float) || (size_t) src1->nb[1] != (size_t) k*sizeof(float)) return false;
     if (!ggml_is_contiguous(dst) || dst->ne[0] != m || dst->ne[1] != src1->ne[1]) return false;
+    if (rsrc0) {
+        if (src1->ne[1] != 1 || k > 4096 || k != 2048) return false;
+        if (rsrc0->type != GGML_TYPE_F32 || rsrc0->ne[0] != k || rsrc0->ne[2] != 1 || rsrc0->ne[3] != 1) return false;
+        if (rsrc0->nb[0] != sizeof(float) || (size_t) rsrc0->nb[1] != (size_t) k*sizeof(float)) return false;
+        if (rdst->type != GGML_TYPE_F32 || !ggml_is_contiguous(rdst) || rdst->ne[0] != rsrc0->ne[1] || rdst->ne[1] != 1) return false;
+        if (rsrc0->ne[1] > 1024 || rsrc0->data == nullptr || rdst->data == nullptr) return false;
+    }
 
     const int     nc      = (int) src1->ne[1];
     const int     nblk_x  = (int) (k / 256);
@@ -749,10 +905,17 @@ static bool try_q6k(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, c
     // still reference the old block - the #177 lesson on the rep side)
     static char * g_buf = nullptr;
     static size_t g_cap = 0;
+    // prep cache: the key of the activation prep that g_buf holds now (see the prep loop below)
+    static const void * g_p_tensor = nullptr;
+    static const void * g_p_src = nullptr;
+    static int64_t g_p_k = 0, g_p_nc = 0;
+    static cudaStream_t g_p_stream = nullptr;
+    static uint64_t g_p_epoch = 0;
     if (g_cap < bytes) {
         void * p = nullptr;
         if (cudaMalloc(&p, bytes) != cudaSuccess) return false;
         g_buf = (char *) p; g_cap = bytes;
+        g_p_tensor = nullptr;   // the new block holds no prep yet
     }
     __half * yh = (__half *) g_buf;
     float4 * ys = (float4 *) (g_buf + 4*y_bytes);
@@ -782,23 +945,67 @@ static bool try_q6k(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, c
 
     const int     nb  = (int) (k / 16);
     const int64_t ld  = (int64_t) (src1->nb[1] / sizeof(float));
-    for (int c = 0; c < nc; c++) {
-        q6k_prep_x<<<(nb + 7) / 8, 256, 0, stream>>>((const float *) src1->data + (size_t) c * ld,
-                                                     yh + (size_t) c * k, ys + (size_t) c * (k / 16), nb);
+    // prep cache: Q, K and V read one attn_norm output, so the K and V calls reuse Q's prep. Single-entry, keyed
+    // like the Q4_K prep cache plus the stream: a hit means g_buf still holds THIS (tensor, data, k, nc, stream,
+    // epoch)'s prep, and the epoch advances on every graph evaluation, so a new token never hits a stale prep.
+    // NC=1 is fused: the GEMV CTAs prepare the activation themselves, so no prep launch and no cache entry.
+    const bool fuse = nc == 1 && k <= 4096;
+    if (!fuse && !(g_p_tensor == src1 && g_p_src == src1->data && g_p_k == k && g_p_nc == nc && g_p_stream == stream &&
+          g_p_epoch == ctx.graph_epoch)) {
+        for (int c = 0; c < nc; c++) {
+            q6k_prep_x<<<(nb + 7) / 8, 256, 0, stream>>>((const float *) src1->data + (size_t) c * ld,
+                                                         yh + (size_t) c * k, ys + (size_t) c * (k / 16), nb);
+        }
+        g_p_tensor = src1; g_p_src = src1->data; g_p_k = k; g_p_nc = nc; g_p_stream = stream; g_p_epoch = ctx.graph_epoch;
     }
-    // R=8 everywhere: the standalone sweep read R=8 best at 5 of 6 shapes and within 8% at the sixth;
-    // per-shape R sniffing was rejected as benchmark tuning.
-    constexpr int R = 8;
+    // Rows per warp follow the device fill: the largest R in {8,4,2} that gives at least 4 CTAs per SM,
+    // else R=1. R only sets the grid (which rows a warp owns), never a row's K order, so the output is
+    // bit-identical at every R. The 512-row K/V projections went from 16 CTAs on 56 SMs to 128 at R=1.
     const int     ldy = (int) k, lds = (int) (k / 16);
-    const int     gr  = (int) ((m + 4*R - 1) / (4*R));
     float   * O = (float *) dst->data;
-    if      (nc == 1) q6k_head<R,1><<<gr, 128, 0, stream>>>(W, yh, ys, O, (int) m, nblk_x, ldy, lds);
-    else if (nc == 2) q6k_head<R,2><<<gr, 128, 0, stream>>>(W, yh, ys, O, (int) m, nblk_x, ldy, lds);
-    else return false;
-    return cudaGetLastError() == cudaSuccess;
+    const int     nsm  = ggml_cuda_info().devices[ggml_cuda_get_device()].nsm;
+    const int64_t want = 4 * (int64_t) nsm;
+    const auto    ctas = [&](int R) { return ((int64_t) m + 4*R - 1) / (4*R); };
+    const float * xf = fuse ? (const float *) src1->data : nullptr;
+    if (rsrc0) {
+        // The router CTAs read the raw activation, which only the fused case passes. The checks at the top hold
+        // the router to that case today; this keeps a later change to `fuse` from handing the router a null pointer.
+        if (xf == nullptr) return false;
+        // same R as the QKV launch alone would take, so the QKV CTAs run unchanged
+        const float * rw = (const float *) rsrc0->data;
+        float * ro = (float *) rdst->data;
+        const int nrt = (int) rsrc0->ne[1];
+        if      (ctas(8) >= want) return q6k_head_router_launch<8>(W, O, m, nblk_x, ldy, lds, xf, rw, ro, nrt, stream);
+        else if (ctas(4) >= want) return q6k_head_router_launch<4>(W, O, m, nblk_x, ldy, lds, xf, rw, ro, nrt, stream);
+        else if (ctas(2) >= want) return q6k_head_router_launch<2>(W, O, m, nblk_x, ldy, lds, xf, rw, ro, nrt, stream);
+        return q6k_head_router_launch<1>(W, O, m, nblk_x, ldy, lds, xf, rw, ro, nrt, stream);
+    }
+    if      (ctas(8) >= want) return q6k_head_launch<8>(W, yh, ys, O, m, nc, nblk_x, ldy, lds, xf, stream);
+    else if (ctas(4) >= want) return q6k_head_launch<4>(W, yh, ys, O, m, nc, nblk_x, ldy, lds, xf, stream);
+    else if (ctas(2) >= want) return q6k_head_launch<2>(W, yh, ys, O, m, nc, nblk_x, ldy, lds, xf, stream);
+    return q6k_head_launch<1>(W, yh, ys, O, m, nc, nblk_x, ldy, lds, xf, stream);
 }
 
 } // namespace sm60q6k
+
+// The Q6_K QKV projection of one decoded token and the F32 router that reads the same activation, in one launch.
+// Gated like ggml_cuda_mmvh_sm60_try's Q6_K arm; on by default, GGML_CUDA_MMV_SM60_QKV_ROUTER=0 turns it off.
+// Returns false, with nothing launched, when the pair does not hold; the caller then runs both nodes alone.
+bool ggml_cuda_mmvh_sm60_try_qkv_router(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1,
+                                        ggml_tensor * dst, const ggml_tensor * rsrc0, ggml_tensor * rdst) {
+    static const bool on = [] {
+        const char * e = getenv("GGML_CUDA_MMV_SM60_QKV_ROUTER");
+        return e == nullptr || atoi(e) != 0;
+    }();
+    if (!on || ggml_cuda_mmvh_sm60_mode() == 0) {
+        return false;
+    }
+    if (!sm60q6k::q6k_on() || src0->type != GGML_TYPE_Q6_K || src1->ne[1] != 1 ||
+        ggml_cuda_info().devices[ctx.device].cc != GGML_CUDA_CC_PASCAL) {
+        return false;
+    }
+    return sm60q6k::try_q6k(ctx, src0, src1, dst, rsrc0, rdst);
+}
 
 // B-06 follow-up: the MTP draft head scores a fixed id subset of the Q4_K lm_head through MUL_MAT_ID
 // one-row experts (mul_mat_vec_q_indexed_rows, ~242 GB/s at 64K rows). The subset is fixed per map,

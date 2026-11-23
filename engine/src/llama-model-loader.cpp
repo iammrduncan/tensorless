@@ -1420,6 +1420,34 @@ struct ggml_tensor * llama_model_loader::create_tensor(
         return view;
     }
 
+    if (flags & TENSOR_QKV_VIEW) {
+        // the layer's wq rows, then its wk rows, then its wv rows, in one parent with no GGUF data of its own;
+        // the parent is not counted as a created tensor, the three views are, and their GGUF data loads straight into it
+        const std::string q_name = format("blk.%d.attn_q.weight", tn.bid);
+        const std::string k_name = format("blk.%d.attn_k.weight", tn.bid);
+        const std::string v_name = format("blk.%d.attn_v.weight", tn.bid);
+        const ggml_tensor * q_meta = get_tensor_meta(q_name.c_str());
+        const ggml_tensor * k_meta = get_tensor_meta(k_name.c_str());
+        const ggml_tensor * v_meta = get_tensor_meta(v_name.c_str());
+        GGML_ASSERT(q_meta && k_meta && v_meta);
+        const std::string parent_name = format("blk.%d.attn_qkv_fused.weight", tn.bid);
+        ggml_tensor * parent = ggml_get_tensor(ctx, parent_name.c_str());
+        if (!parent) {
+            parent = ggml_new_tensor_2d(ctx, t_meta.type, t_meta.ne[0], q_meta->ne[1] + k_meta->ne[1] + v_meta->ne[1]);
+            ggml_set_name(parent, parent_name.c_str());
+        }
+        int64_t row0 = 0;
+        if (tn.tensor == LLM_TENSOR_ATTN_K) {
+            row0 = q_meta->ne[1];
+        } else if (tn.tensor == LLM_TENSOR_ATTN_V) {
+            row0 = q_meta->ne[1] + k_meta->ne[1];
+        }
+        ggml_tensor * view = ggml_view_2d(ctx, parent, t_meta.ne[0], t_meta.ne[1], parent->nb[1], row0*parent->nb[1]);
+        ggml_set_name(view, ggml_get_name(&t_meta));
+        n_created++;
+        return view;
+    }
+
     struct ggml_tensor * tensor = ggml_dup_tensor(ctx, &t_meta);
     ggml_set_name(tensor, ggml_get_name(&t_meta));
 

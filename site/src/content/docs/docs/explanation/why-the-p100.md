@@ -43,7 +43,7 @@ On newer cards, fewer bits per weight almost always means faster decode. On the 
 
 Without those, unpacking each weight costs instructions, and the lowest-bit formats cost the most instructions to unpack. A GEMV (the matrix-vector product at the heart of decode) on the P100 can become limited by **instructions per weight** rather than bits per weight.
 
-The evidence is in the two launch targets:
+The evidence is in the two Qwen3.8-27B launch targets:
 
 | Model | File size | Decode, short context |
 |---|---:|---:|

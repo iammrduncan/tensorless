@@ -4117,6 +4117,109 @@ static bool ggml_cuda_match_moe_weighted_reduction(
     return true;
 }
 
+// Decode form of build_moe_ffn() for eight experts (n_tokens == 1): MUL by the router weights, PERMUTE, CONT,
+// SUM_ROWS and RESHAPE, with the residual ADD right after when the graph has one. ggml_cuda_op_moe_tail_decode()
+// computes the same sum in the order sum_rows uses for an eight-element row.
+struct ggml_cuda_moe_tail_match {
+    const ggml_tensor * experts    = nullptr;
+    const ggml_tensor * weights    = nullptr;
+    const ggml_tensor * residual   = nullptr;
+    ggml_tensor *       dst        = nullptr;
+    int                 node_count = 0;
+};
+
+static bool ggml_cuda_match_moe_tail_decode(
+        const ggml_cgraph * cgraph,
+        int node_idx,
+        ggml_cuda_moe_tail_match & match) {
+    constexpr int64_t n_expert_used = 8;
+    if (node_idx + 5 > cgraph->n_nodes) {
+        return false;
+    }
+
+    const ggml_tensor * mul = cgraph->nodes[node_idx];
+    if (mul->op != GGML_OP_MUL || mul->type != GGML_TYPE_F32 || !ggml_is_contiguous(mul) ||
+            mul->ne[1] != n_expert_used || mul->ne[2] != 1 || mul->ne[3] != 1 || mul->ne[0] % 32 != 0) {
+        return false;
+    }
+
+    auto is_experts = [mul](const ggml_tensor * t) {
+        return t->type == GGML_TYPE_F32 && ggml_are_same_shape(t, mul) && ggml_is_contiguous(t);
+    };
+    auto is_weights = [mul](const ggml_tensor * t) {
+        return t->type == GGML_TYPE_F32 && t->ne[0] == 1 && t->ne[1] == mul->ne[1] && t->ne[2] == 1 &&
+            t->ne[3] == 1 && ggml_is_contiguous(t);
+    };
+    const ggml_tensor * experts = nullptr;
+    const ggml_tensor * weights = nullptr;
+    if (is_experts(mul->src[0]) && is_weights(mul->src[1])) {
+        experts = mul->src[0];
+        weights = mul->src[1];
+    } else if (is_experts(mul->src[1]) && is_weights(mul->src[0])) {
+        experts = mul->src[1];
+        weights = mul->src[0];
+    } else {
+        return false;
+    }
+
+    const int64_t n_embd = mul->ne[0];
+    const ggml_tensor * permute = cgraph->nodes[node_idx + 1];
+    const ggml_tensor * cont    = cgraph->nodes[node_idx + 2];
+    const ggml_tensor * sum     = cgraph->nodes[node_idx + 3];
+    const ggml_tensor * reshape = cgraph->nodes[node_idx + 4];
+
+    if (permute->op != GGML_OP_PERMUTE || permute->src[0] != mul || permute->ne[0] != n_expert_used ||
+            permute->ne[1] != n_embd || permute->nb[0] != mul->nb[1] || permute->nb[1] != mul->nb[0]) {
+        return false;
+    }
+    if (cont->op != GGML_OP_CONT || cont->src[0] != permute || cont->type != GGML_TYPE_F32 ||
+            cont->ne[0] != n_expert_used || cont->ne[1] != n_embd || !ggml_is_contiguous(cont)) {
+        return false;
+    }
+    if (sum->op != GGML_OP_SUM_ROWS || sum->src[0] != cont || sum->type != GGML_TYPE_F32 ||
+            sum->ne[0] != 1 || sum->ne[1] != n_embd || !ggml_is_contiguous(sum)) {
+        return false;
+    }
+    if (reshape->op != GGML_OP_RESHAPE || reshape->src[0] != sum || reshape->type != GGML_TYPE_F32 ||
+            ggml_nelements(reshape) != n_embd) {
+        return false;
+    }
+
+    // sum_rows takes the strided kernel (block of 32 per row) only when there are at least two rows per SM
+    const int id  = ggml_cuda_get_device();
+    const int nsm = ggml_cuda_info().devices[id].nsm;
+    if (n_embd < 2 * (int64_t) nsm) {
+        return false;
+    }
+
+    std::vector<ggml_op> ops = { GGML_OP_MUL, GGML_OP_PERMUTE, GGML_OP_CONT, GGML_OP_SUM_ROWS, GGML_OP_RESHAPE };
+    const ggml_tensor * residual = nullptr;
+    if (node_idx + 5 < cgraph->n_nodes) {
+        const ggml_tensor * add = cgraph->nodes[node_idx + 5];
+        if (add->op == GGML_OP_ADD && add->type == GGML_TYPE_F32 && ggml_is_contiguous(add) &&
+                ggml_are_same_shape(add, reshape) && (add->src[0] == reshape) != (add->src[1] == reshape)) {
+            const ggml_tensor * other = add->src[0] == reshape ? add->src[1] : add->src[0];
+            if (other->type == GGML_TYPE_F32 && ggml_is_contiguous(other) && ggml_are_same_shape(other, reshape)) {
+                residual = other;
+                ops.push_back(GGML_OP_ADD);
+            }
+        }
+    }
+
+    const int node_count = (int) ops.size();
+    const int output_idx = node_idx + node_count - 1;
+    if (!ggml_can_fuse_subgraph(cgraph, node_idx, node_count, ops.data(), &output_idx, 1)) {
+        return false;
+    }
+
+    match.experts    = experts;
+    match.weights    = weights;
+    match.residual   = residual;
+    match.dst        = cgraph->nodes[output_idx];
+    match.node_count = node_count;
+    return true;
+}
+
 
 static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
                                int                                       node_idx,
@@ -4904,6 +5007,229 @@ static bool ggml_cuda_try_pn_glu(ggml_backend_cuda_context & ctx, ggml_cgraph * 
     return true;
 }
 
+// a plain RoPE of one decoded token's rows: normal pairs over the whole head, F32 in and out, pos I32
+static bool ggml_cuda_is_plain_rope(const ggml_tensor * rope) {
+    if (rope->op != GGML_OP_ROPE || rope->type != GGML_TYPE_F32 || rope->src[0]->type != GGML_TYPE_F32 ||
+        rope->src[1]->type != GGML_TYPE_I32 || rope->src[0]->nb[0] != sizeof(float) || rope->nb[0] != sizeof(float) ||
+        rope->src[0]->ne[2] != 1 || rope->src[0]->ne[3] != 1 || rope->ne[0] % 2 != 0) {
+        return false;
+    }
+    const int32_t * op = (const int32_t *) rope->op_params;
+    if (op[1] != rope->ne[0] || op[2] != GGML_ROPE_TYPE_NORMAL || op[15] != 0) {
+        return false;
+    }
+    return rope->src[2] == nullptr || rope->src[2]->type == GGML_TYPE_F32;
+}
+
+// SWIGLU whose next node is a decode MUL_MAT_ID on a quantized expert weight (the down projection): the GLU also
+// writes the q8_1 bytes that projection would quantize for itself, into the q8_cache entry keyed to the GLU output,
+// so the projection's own quantize launch is skipped (it hits the entry). Runs the GLU and returns true, or returns
+// false having run nothing. GGML_CUDA_SWIGLU_Q8_OFF=1 turns it off (the dev control).
+static bool ggml_cuda_try_swiglu_q8(ggml_backend_cuda_context & ctx, ggml_cgraph * cgraph, int i) {
+    static const bool off = getenv("GGML_CUDA_SWIGLU_Q8_OFF") != nullptr;
+    if (off || i + 1 >= cgraph->n_nodes || ctx.curr_stream_no != 0) {
+        return false;
+    }
+    ggml_tensor * glu  = cgraph->nodes[i];
+    ggml_tensor * down = cgraph->nodes[i + 1];
+    if (glu->op != GGML_OP_GLU || ggml_get_glu_op(glu) != GGML_GLU_OP_SWIGLU || ggml_get_op_params_i32(glu, 1) != 0 ||
+        glu->src[1] == nullptr) {
+        return false;
+    }
+    if (down->op != GGML_OP_MUL_MAT_ID || down->src[1] != glu) {
+        return false;
+    }
+    const ggml_tensor * w = down->src[0];
+    if (!ggml_is_quantized(w->type) || w->type == GGML_TYPE_IQ4_XS || w->type == GGML_TYPE_TQ4_1S || w->type == GGML_TYPE_TQ3_1S) {
+        return false;
+    }
+    const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
+    if (down->ne[2] > MMVQ_MAX_BATCH_SIZE || down->ne[2] > get_mmvq_mmid_max_batch(w->type, cc)) {
+        return false;
+    }
+    if (glu->type != GGML_TYPE_F32 || glu->src[0]->type != GGML_TYPE_F32 || glu->src[1]->type != GGML_TYPE_F32 ||
+        !ggml_is_contiguous(glu) || !ggml_is_contiguous(glu->src[0]) || !ggml_is_contiguous(glu->src[1]) ||
+        glu->ne[2] != 1 || glu->ne[3] != 1 || glu->ne[0] % QK8_1 != 0) {
+        return false;
+    }
+    const int64_t npad     = GGML_PAD(glu->ne[0], MATRIX_ROW_PADDING);
+    const size_t  q8_bytes = (size_t) glu->ne[1] * npad * sizeof(block_q8_1) / QK8_1;
+    if (q8_bytes > (1u << 20)) {
+        return false;
+    }
+    auto & qc = ctx.q8_cache;
+    if (qc.dev != ctx.device || qc.cap < q8_bytes) {
+        // Retire, never free: a captured graph may still hold the old pointer (see ggml_cuda_mul_mat_vec_q).
+        if (qc.ptr != nullptr) {
+            qc.retired.push_back({ qc.ptr, qc.cap, qc.dev });
+        }
+        CUDA_CHECK(ggml_cuda_device_malloc((void **) &qc.ptr, q8_bytes, ctx.device));
+        qc.cap = q8_bytes;
+        qc.dev = ctx.device;
+    }
+    ggml_cuda_op_swiglu_q8_1(ctx, glu, qc.ptr, npad);
+    qc.src1        = glu;
+    qc.data        = glu->data;
+    qc.epoch       = ctx.graph_epoch;
+    qc.size        = q8_bytes;
+    qc.ne10_padded = npad;
+    qc.type        = GGML_TYPE_Q8_0;
+    return true;
+}
+
+// whether t (or the tensor it views or reshapes) is an input or a node before node i
+static bool ggml_cuda_computed_before(const ggml_cgraph * cgraph, const int i, const ggml_tensor * t) {
+    while (t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE) {
+        t = t->src[0];
+    }
+    if (t->op == GGML_OP_NONE) {
+        return true;
+    }
+    for (int k = 0; k < i; ++k) {
+        if (cgraph->nodes[k] == t) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Q's RoPE (node i), then K's RoPE, its q8_0 cache write and the layer's V q8_0 cache write, in one launch at Q's
+// position. Only views may lie between them, so K's and V's sources must already be computed before node i.
+static int ggml_cuda_try_fuse_rope_q_kv_q8_0(ggml_backend_cuda_context * cuda_ctx, const ggml_cgraph * cgraph, const int i) {
+    const ggml_tensor * q_rope = cgraph->nodes[i];
+    if (!ggml_cuda_is_plain_rope(q_rope) || q_rope->ne[2] != 1 || q_rope->ne[3] != 1) {
+        return 0;
+    }
+
+    // K's RoPE, the first compute node after Q's, with views only between
+    int kr = i + 1;
+    while (kr < i + 6 && kr < cgraph->n_nodes && ggml_cuda_is_view_or_noop(cgraph->nodes[kr])) {
+        ++kr;
+    }
+    if (kr >= i + 6 || kr + 2 >= cgraph->n_nodes) {
+        return 0;
+    }
+    const ggml_tensor * k_rope = cgraph->nodes[kr];
+    const ggml_tensor * k_view = cgraph->nodes[kr + 1];
+    const ggml_tensor * k_set  = cgraph->nodes[kr + 2];
+    if (!ggml_cuda_is_plain_rope(k_rope) || k_rope->ne[0] % QK8_0 != 0 || k_rope->ne[0] * k_rope->ne[1] != 512 ||
+        k_rope->ne[2] != 1 || k_rope->ne[3] != 1 || k_rope->src[2] != q_rope->src[2] ||
+        memcmp(k_rope->op_params, q_rope->op_params, sizeof(q_rope->op_params)) != 0) {
+        return 0;
+    }
+    if (k_view->op != GGML_OP_VIEW || k_view->src[0] != k_rope || !ggml_is_contiguous(k_view) || k_view->ne[0] != 512 ||
+        k_set->op != GGML_OP_SET_ROWS || k_set->type != GGML_TYPE_Q8_0 || k_set->src[0] != k_view ||
+        k_set->src[1]->type != GGML_TYPE_I64) {
+        return 0;
+    }
+
+    // V's q8_0 write: the next SET_ROWS after views only
+    int j = kr + 3;
+    while (j < kr + 8 && j < cgraph->n_nodes && cgraph->nodes[j]->op == GGML_OP_VIEW) {
+        ++j;
+    }
+    if (j >= kr + 8 || j >= cgraph->n_nodes) {
+        return 0;
+    }
+    const ggml_tensor * v_set  = cgraph->nodes[j];
+    const ggml_tensor * v_view = v_set->src[0];
+    if (v_set->op != GGML_OP_SET_ROWS || v_set->type != GGML_TYPE_Q8_0 || v_set->src[1]->type != GGML_TYPE_I64 ||
+        v_set->src[1]->ne[0] != 1 || v_view->op != GGML_OP_VIEW || v_view->type != GGML_TYPE_F32 ||
+        v_view->ne[0] != 512 || v_view->ne[1] != 1 || v_view->ne[2] != 1 || v_view->nb[0] != sizeof(float)) {
+        return 0;
+    }
+
+    // K's and V's sources must exist before node i
+    if (!ggml_cuda_computed_before(cgraph, i, k_rope->src[0]) || !ggml_cuda_computed_before(cgraph, i, v_view->src[0])) {
+        return 0;
+    }
+
+    const int out_nodes[] = { i, kr + 2, j };
+    if (!ggml_cuda_check_fusion_memory_ranges(cgraph, i, j - i + 1, out_nodes, 3, false)) {
+        return 0;
+    }
+
+    ggml_cuda_op_rope_q_kv_q8_0_fused(*cuda_ctx, cgraph->nodes[i], cgraph->nodes[kr], cgraph->nodes[kr + 2], cgraph->nodes[j]);
+    return j - i;
+}
+
+// K's q8_0 cache write (node i, a SET_ROWS of one decoded token's 512-wide row) and the next V q8_0 cache write, in one
+// launch at K's position. Only views may lie between them, so V's source must already be computed before node i.
+static int ggml_cuda_try_fuse_kv_set_rows_q8_0(ggml_backend_cuda_context * cuda_ctx, const ggml_cgraph * cgraph, const int i) {
+    const ggml_tensor * k_set = cgraph->nodes[i];
+    if (k_set->op != GGML_OP_SET_ROWS || k_set->type != GGML_TYPE_Q8_0 || k_set->src[1]->type != GGML_TYPE_I64 ||
+        k_set->src[1]->ne[0] != 1) {
+        return 0;
+    }
+    const ggml_tensor * k_view = k_set->src[0];
+    if (k_view->op != GGML_OP_VIEW || k_view->type != GGML_TYPE_F32 || k_view->ne[0] != 512 || k_view->ne[1] != 1 ||
+        k_view->ne[2] != 1 || k_view->nb[0] != sizeof(float)) {
+        return 0;
+    }
+
+    // V's q8_0 write: the next SET_ROWS after views only
+    int j = i + 1;
+    while (j < i + 6 && j < cgraph->n_nodes && cgraph->nodes[j]->op == GGML_OP_VIEW) {
+        ++j;
+    }
+    if (j >= i + 6 || j >= cgraph->n_nodes) {
+        return 0;
+    }
+    const ggml_tensor * v_set  = cgraph->nodes[j];
+    const ggml_tensor * v_view = v_set->src[0];
+    if (v_set->op != GGML_OP_SET_ROWS || v_set->type != GGML_TYPE_Q8_0 || v_set->src[1]->type != GGML_TYPE_I64 ||
+        v_set->src[1]->ne[0] != 1 || v_view->op != GGML_OP_VIEW || v_view->type != GGML_TYPE_F32 ||
+        v_view->ne[0] != 512 || v_view->ne[1] != 1 || v_view->ne[2] != 1 || v_view->nb[0] != sizeof(float)) {
+        return 0;
+    }
+
+    if (!ggml_cuda_computed_before(cgraph, i, v_view->src[0])) {
+        return 0;
+    }
+
+    const int out_nodes[] = { i, j };
+    if (!ggml_cuda_check_fusion_memory_ranges(cgraph, i, j - i + 1, out_nodes, 2, false)) {
+        return 0;
+    }
+
+    ggml_cuda_op_kv_set_rows_q8_0_fused(*cuda_ctx, cgraph->nodes[i], cgraph->nodes[j]);
+    return j - i;
+}
+
+// The F32 router GEMV (ffn_gate_inp x the same activation) that follows the Q6_K QKV GEMV (node i), with views only
+// between. Both outputs come from one launch: the router rows run as tail CTAs of the QKV head launch, and the router
+// node is skipped. The router's weight is a constant and its activation is QKV's src1, so no node in between is needed.
+static int ggml_cuda_try_fuse_qkv_router(ggml_backend_cuda_context * cuda_ctx, const ggml_cgraph * cgraph, const int i) {
+    ggml_tensor * qkv = cgraph->nodes[i];
+    if (qkv->op != GGML_OP_MUL_MAT || qkv->type != GGML_TYPE_F32 || qkv->src[0]->type != GGML_TYPE_Q6_K) {
+        return 0;
+    }
+
+    int r = i + 1;
+    while (r < i + 6 && r < cgraph->n_nodes && ggml_cuda_is_view_or_noop(cgraph->nodes[r])) {
+        ++r;
+    }
+    if (r >= i + 6 || r >= cgraph->n_nodes) {
+        return 0;
+    }
+    ggml_tensor * router = cgraph->nodes[r];
+    if (router->op != GGML_OP_MUL_MAT || router->type != GGML_TYPE_F32 || router->src[0]->type != GGML_TYPE_F32 ||
+        router->src[1] != qkv->src[1] || (router->flags & GGML_TENSOR_FLAG_COMPUTE) == 0 ||
+        !ggml_cuda_computed_before(cgraph, i, router->src[0])) {
+        return 0;
+    }
+
+    const int out_nodes[] = { i, r };
+    if (!ggml_cuda_check_fusion_memory_ranges(cgraph, i, r - i + 1, out_nodes, 2, false)) {
+        return 0;
+    }
+
+    if (!ggml_cuda_mmvh_sm60_try_qkv_router(*cuda_ctx, qkv->src[0], qkv->src[1], qkv, router->src[0], router)) {
+        return 0;
+    }
+    return r - i;
+}
+
 static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph, int i,
                               bool allow_defer) {
 
@@ -4918,6 +5244,12 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
         return 2;
     }
 
+    if (node->op == GGML_OP_MUL_MAT) {
+        if (const int nodes_to_skip = ggml_cuda_try_fuse_qkv_router(cuda_ctx, cgraph, i)) {
+            return nodes_to_skip;
+        }
+    }
+
     if (node->op == GGML_OP_MUL) {
         ggml_cuda_moe_weighted_reduction_match match;
         if (ggml_cuda_match_moe_weighted_reduction(cgraph, i, match)) {
@@ -4926,6 +5258,15 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
                 ggml_cuda_op_moe_weighted_reduction(
                     *cuda_ctx, match.experts, match.expert_scale, match.weights, match.dst);
                 return match.node_count - 1;
+            }
+        }
+
+        ggml_cuda_moe_tail_match tail;
+        if (ggml_cuda_match_moe_tail_decode(cgraph, i, tail)) {
+            const int output_idx = i + tail.node_count - 1;
+            if (ggml_cuda_check_fusion_memory_ranges(cgraph, i, tail.node_count, &output_idx, 1)) {
+                ggml_cuda_op_moe_tail_decode(*cuda_ctx, tail.experts, tail.weights, tail.residual, tail.dst);
+                return tail.node_count - 1;
             }
         }
     }
@@ -5182,6 +5523,16 @@ static int ggml_cuda_try_fuse(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph 
         if (pattern_ok && ggml_cuda_op_fwht_signed(*cuda_ctx, x, signs, mm)) {
             return 2;
         }
+    }
+
+    //Q RoPE, then K RoPE + view + q8_0 set-rows with the V q8_0 set-rows, in one launch
+    if (const int nodes_to_skip = ggml_cuda_try_fuse_rope_q_kv_q8_0(cuda_ctx, cgraph, i)) {
+        return nodes_to_skip;
+    }
+
+    //K and V set-rows of a decoded token (the no-RoPE layers), in one launch
+    if (const int nodes_to_skip = ggml_cuda_try_fuse_kv_set_rows_q8_0(cuda_ctx, cgraph, i)) {
+        return nodes_to_skip;
     }
 
     //RoPE + view + set-rows
@@ -6022,7 +6373,8 @@ static void ggml_cuda_graph_evaluate_and_capture(ggml_backend_cuda_context * cud
                 // suppressed by the slot membership check.
                 ggml_cuda_pn_prefetch_lookahead(*cuda_ctx, cgraph, i);
 
-                bool ok = ggml_cuda_compute_forward(*cuda_ctx, node);
+                bool ok = (node->op == GGML_OP_GLU && ggml_cuda_try_swiglu_q8(*cuda_ctx, cgraph, i)) ||
+                          ggml_cuda_compute_forward(*cuda_ctx, node);
                 if (!ok) {
                     GGML_LOG_ERROR("%s: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
                 }
@@ -6234,17 +6586,26 @@ static void ggml_backend_cuda_graph_optimize(ggml_backend_t backend, ggml_cgraph
             }
 
             ggml_cuda_moe_weighted_reduction_match match;
-            if (!ggml_cuda_match_moe_weighted_reduction(cgraph, i, match)) {
+            if (ggml_cuda_match_moe_weighted_reduction(cgraph, i, match)) {
+                params->add_alloc_dep(params->user_data, const_cast<ggml_tensor *>(match.experts), match.dst);
+                params->add_alloc_dep(params->user_data, const_cast<ggml_tensor *>(match.weights), match.dst);
+                if (match.expert_scale != nullptr) {
+                    params->add_alloc_dep(
+                        params->user_data, const_cast<ggml_tensor *>(match.expert_scale), match.dst);
+                }
+                i += match.node_count - 1;
                 continue;
             }
 
-            params->add_alloc_dep(params->user_data, const_cast<ggml_tensor *>(match.experts), match.dst);
-            params->add_alloc_dep(params->user_data, const_cast<ggml_tensor *>(match.weights), match.dst);
-            if (match.expert_scale != nullptr) {
-                params->add_alloc_dep(
-                    params->user_data, const_cast<ggml_tensor *>(match.expert_scale), match.dst);
+            ggml_cuda_moe_tail_match tail;
+            if (ggml_cuda_match_moe_tail_decode(cgraph, i, tail)) {
+                params->add_alloc_dep(params->user_data, const_cast<ggml_tensor *>(tail.experts), tail.dst);
+                params->add_alloc_dep(params->user_data, const_cast<ggml_tensor *>(tail.weights), tail.dst);
+                if (tail.residual != nullptr) {
+                    params->add_alloc_dep(params->user_data, const_cast<ggml_tensor *>(tail.residual), tail.dst);
+                }
+                i += tail.node_count - 1;
             }
-            i += match.node_count - 1;
         }
     }
 

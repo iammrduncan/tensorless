@@ -55,10 +55,11 @@ The docs follow [Diátaxis](https://diataxis.fr/): each page has one job.
 
 | Launch command | Decode on one P100 |
 |---|---:|
-| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | **30.48 tok/s** |
-| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | 26.69 tok/s |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | **30.45 tok/s** |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | 26.53 tok/s |
+| `tensorless run unsloth/North-Mini-Code-1.0-GGUF` | **93.70 tok/s**; 79.94 after a 3,911-token prompt |
 
-Both were measured on the published engine image with `tensorless bench`: the median of 3 runs of 256 greedy tokens after a 429-token prompt. The [launch targets](reference/launch-targets.md) page has the details, and the [receipts](reference/receipts.md) have every measurement.
+All were measured on the published engine image with `tensorless bench`: the median of 3 runs of 256 greedy tokens after a 429-token prompt (North-Mini-Code-1.0: 411 tokens). North-Mini-Code-1.0's second number is the same kind of run after a longer prompt. The [launch targets](reference/launch-targets.md) page has the details, and the [receipts](reference/receipts.md) have every measurement.
 
 ## Get help
 

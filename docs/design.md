@@ -1,8 +1,8 @@
 # tensorless: design
 
-Status: v0.2.0 released, 2026-11-12 (engine-v0.2.0, image 0.2.0-sm60, launcher v0.2.0). v0.1.0 was released on 2026-11-02 (engine-v0.1.0, image 0.1.0-sm60, launcher v0.1.0).
+Status: v0.3.0 released, 2026-11-23 (engine-v0.3.0, image 0.3.0-sm60, launcher v0.3.0). v0.2.0 was released on 2026-11-12 (engine-v0.2.0, image 0.2.0-sm60), and v0.1.0 on 2026-11-02 (engine-v0.1.0, image 0.1.0-sm60).
 
-engine-v0.2.0 is the champion of the prefill hill climb that started from engine-v0.1.0, plus one fix found by running a locally built image on a P100 before the release candidate was built. Both recipes moved to it after the published image was measured with each model ([receipts](receipts/engine-v0.2.0/)).
+engine-v0.3.0 is the champion of a decode hill climb on North-Mini-Code-1.0 that started from engine-v0.2.0, plus two fixes made after the import and one build flag. It adds a third launch target, `unsloth/North-Mini-Code-1.0-GGUF`. All three recipes are on it, released after the published image was measured with each model ([receipts](receipts/engine-v0.3.0/)). engine-v0.2.0 was the champion of the prefill hill climb that started from engine-v0.1.0, plus one fix.
 
 ## The goal
 
@@ -25,7 +25,7 @@ The launcher detects the card, picks the recipe for that model on that card, pul
 
 ### Why not one image per model
 
-- **One engine build already serves several models.** The P100 engine runs Qwen3.8-27B-PN3 and Qwen3.8-27B-UD-IQ3_XXS-Q3Floor (Unsloth's UD-IQ3_XXS with a 3-bit floor) from the same binary. Every tuning step was checked against Qwen3.8-27B-UD-IQ3_XXS-Q3Floor, which had to produce bit-identical text, so a change for one model could not silently break the other. The PN kernels only engage on PN tensor types.
+- **One engine build already serves several models.** The P100 engine runs Qwen3.8-27B-PN3, Qwen3.8-27B-UD-IQ3_XXS-Q3Floor (Unsloth's UD-IQ3_XXS with a 3-bit floor) and North-Mini-Code-1.0 from the same binary. Every step of the two Qwen3.8-27B climbs was checked against Qwen3.8-27B-UD-IQ3_XXS-Q3Floor, which had to produce bit-identical text, so a change for one model could not silently break the other. The PN kernels only engage on PN tensor types.
 - **What differs per model is runtime configuration:** the engine's `GGML_CUDA_*` switches and the server's flags (context length, KV-cache type, batch sizes, offload). That is data, so it goes in a recipe.
 - **A fix should be one rebuild, not one rebuild per model.**
 

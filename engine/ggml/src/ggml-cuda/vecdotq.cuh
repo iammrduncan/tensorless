@@ -1362,6 +1362,12 @@ static __device__ __forceinline__ uint32_t * ksigns_smem() {
 // the contract's 4/4 text check is its gate. Defined here so the guards below see it; if it pays, a
 // proper build option should replace this line.
 #define GGML_CUDA_IQ3S_DIET 1
+// The same diet for the IQ2_S expert dot (gate and up): paired codebook indices and pre-expanded sign masks
+// replace the per-nibble index and sign extraction. The integer terms are the stock ones, so the sums are
+// bit-identical. On by default; a build that defines GGML_CUDA_IQ2S_NO_DIET takes the stock dot instead.
+#ifndef GGML_CUDA_IQ2S_NO_DIET
+#define GGML_CUDA_IQ2S_DIET 1
+#endif
 #ifdef GGML_CUDA_IQ3S_DIET
 static __device__ __forceinline__ uint2 * ksigns2_smem() {
     __shared__ uint2 s_ksigns2[16];

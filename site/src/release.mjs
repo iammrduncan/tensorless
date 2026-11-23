@@ -24,20 +24,23 @@ export const recipes = walk(recipesDir)
 
 /** Versions and the measurements of the published image, as the receipts state them. */
 export const release = {
-  launcher: "0.2.0",
-  engine: "engine-v0.2.0",
-  image: "ghcr.io/iammrduncan/tensorless-engine:0.2.0-sm60",
-  digest: "sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7",
-  // tensorless bench on the published image, one Tesla P100-PCIE-16GB, 2026-11-12
-  // (docs/receipts/engine-v0.2.0/).
+  launcher: "0.3.0",
+  engine: "engine-v0.3.0",
+  image: "ghcr.io/iammrduncan/tensorless-engine:0.3.0-sm60",
+  digest: "sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e",
+  // tensorless bench on the published image, one Tesla P100-PCIE-16GB, 2026-11-23
+  // (docs/receipts/engine-v0.3.0/). North-Mini-Code-1.0's prompt was 411 tokens, the others' 429.
   measured: {
-    "iamMrDuncan/Qwen3.8-27B-PN3-GGUF": 30.48,
-    "iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF": 26.69,
+    "iamMrDuncan/Qwen3.8-27B-PN3-GGUF": 30.45,
+    "iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF": 26.53,
+    "unsloth/North-Mini-Code-1.0-GGUF": 93.7,
   },
-  // The decode hill climb that produced engine-v0.1.0's PN kernels, and the prefill hill climb that
-  // produced engine-v0.2.0's (engine/PROVENANCE.md).
+  // The decode hill climb that produced engine-v0.1.0's PN kernels, the prefill hill climb that
+  // produced engine-v0.2.0's, and the North-Mini-Code decode hill climb that produced engine-v0.3.0
+  // (engine/PROVENANCE.md; its from / to are the climb's decode metric over both prompt lengths).
   climb: { attempts: 131, champions: 28, from: 7.74, to: 30.06 },
   prefillClimb: { attempts: 369, champions: 26, from: 121.4, to: 200.1 },
+  nmcClimb: { attempts: 127, champions: 22, from: 42.03, to: 72.62 },
 };
 
 for (const r of recipes) {

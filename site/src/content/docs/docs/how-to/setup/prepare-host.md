@@ -73,6 +73,7 @@ The model goes into the Hugging Face cache, `~/.cache/huggingface/hub` unless yo
 |---|---:|
 | Qwen3.8-27B-PN3 | 12.95 GB |
 | Qwen3.8-27B-UD-IQ3_XXS-Q3Floor | 11.76 GB |
+| North-Mini-Code-1.0 UD-IQ3_XXS | 11.71 GB |
 
 The engine image goes into the container runtime's own storage. It is about 1.6 GB to download, and takes a few GB once unpacked.
 
@@ -80,7 +81,7 @@ To keep models on a larger disk, see [Keep models on another disk](../run/model-
 
 ## 6. Free the GPU
 
-A model and its 65,536-token context take about 15 GB of the card's 16 GB: the release measured 14,139 MiB with the server idle and 15,383 MiB once it had read its first prompt. Anything else on the card can make the server fail to start, or run slower.
+A model and its context take 14 to 15 GB of the card's 16 GB. With Qwen3.8-27B-PN3 and its 65,536-token context, the release measured 14,139 MiB with the server idle and 15,381 MiB once it had read its first prompt; with North-Mini-Code-1.0 and its 36,864-token context, 13,877 and 14,409 MiB. Anything else on the card can make the server fail to start, or run slower.
 
 `nvidia-smi` lists the processes that use the card, at the bottom of its output. Stop them before you start a model.
 

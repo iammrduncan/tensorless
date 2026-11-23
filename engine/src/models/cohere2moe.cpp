@@ -81,7 +81,27 @@ void llama_model_cohere2moe::load_arch_tensors(llama_model_loader & ml) {
 
         layer.attn_norm = create_tensor(tn(LLM_TENSOR_ATTN_NORM, "weight", i), { n_embd }, flags);
 
-        create_tensor_qkv(layer, i, n_embd, n_embd_head_k * n_head, n_embd_gqa, n_embd_gqa, flags);
+        // wq, wk and wv of a layer are row ranges of one fused [n_embd, Q+K+V rows] tensor (single device, same type),
+        // so build_qkv runs one MUL_MAT for the three projections; the views hold no bytes of their own
+        const ggml_tensor * q_meta = ml.get_tensor_meta(tn(LLM_TENSOR_ATTN_Q, "weight", i).str().c_str());
+        const ggml_tensor * k_meta = ml.get_tensor_meta(tn(LLM_TENSOR_ATTN_K, "weight", i).str().c_str());
+        const ggml_tensor * v_meta = ml.get_tensor_meta(tn(LLM_TENSOR_ATTN_V, "weight", i).str().c_str());
+        // Only for a layer on a GPU: on the CPU the weights are mapped from the file tensor by tensor, and a view
+        // can't be mapped (ggml_backend_tensor_alloc asserts view_src == NULL), so a load with no card aborted.
+        const bool on_gpu = dev_layer(i) != nullptr && ggml_backend_dev_type(dev_layer(i)) != GGML_BACKEND_DEVICE_TYPE_CPU;
+        const bool fused_qkv = flags == 0 && on_gpu && q_meta != nullptr && k_meta != nullptr && v_meta != nullptr &&
+                q_meta->type == k_meta->type && q_meta->type == v_meta->type && split_mode() != LLAMA_SPLIT_MODE_ROW;
+        if (fused_qkv) {
+            layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), { n_embd, n_embd_head_k * n_head }, llama_model_loader::TENSOR_QKV_VIEW);
+            layer.wk = create_tensor(tn(LLM_TENSOR_ATTN_K, "weight", i), { n_embd, n_embd_gqa },           llama_model_loader::TENSOR_QKV_VIEW);
+            layer.wv = create_tensor(tn(LLM_TENSOR_ATTN_V, "weight", i), { n_embd, n_embd_gqa },           llama_model_loader::TENSOR_QKV_VIEW);
+            layer.wqkv = layer.wq->view_src;
+            layer.wq_b = create_tensor(tn(LLM_TENSOR_ATTN_Q, "bias", i), { n_embd_head_k * n_head }, TENSOR_NOT_REQUIRED);
+            layer.wk_b = create_tensor(tn(LLM_TENSOR_ATTN_K, "bias", i), { n_embd_gqa },           TENSOR_NOT_REQUIRED);
+            layer.wv_b = create_tensor(tn(LLM_TENSOR_ATTN_V, "bias", i), { n_embd_gqa },           TENSOR_NOT_REQUIRED);
+        } else {
+            create_tensor_qkv(layer, i, n_embd, n_embd_head_k * n_head, n_embd_gqa, n_embd_gqa, flags);
+        }
         layer.wo = create_tensor(tn(LLM_TENSOR_ATTN_OUT, "weight", i), { n_embd_head_k * n_head, n_embd }, flags);
 
         if (static_cast<uint32_t>(i) < hparams.n_layer_dense_lead) {
@@ -179,12 +199,29 @@ llama_model_cohere2moe::graph::graph(const llama_model & model, const llm_graph_
         cb(cur, "attn_norm", il);
 
         ggml_tensor * ffn_inp = cur;
+        ggml_tensor * router_logits = nullptr;
 
         {
             const auto & layer = model.layers[il];
 
             auto [Qcur, Kcur, Vcur] = build_qkv(layer, cur,
                     n_embd_head, n_head, n_head_kv, il);
+
+            // the K and V projections go into the graph before Q's RoPE and the cache writes, so that the two
+            // cache writes are adjacent on RoPE and no-RoPE layers alike (the CUDA backend fuses them in one launch)
+            ggml_build_forward_expand(gf, Kcur);
+            ggml_build_forward_expand(gf, Vcur);
+
+            // the router GEMV goes into the graph right after the QKV projections, so the CUDA backend can run it in
+            // the QKV launch (ggml_cuda_try_fuse_qkv_router); build_moe_ffn takes these logits as probs_in. The nextn-masked
+            // last layer gathers ffn_inp rows after attention, so its router stays inside build_moe_ffn.
+            if (layer.ffn_gate_inp != nullptr && !(il == n_layer - 1 && inp_out_ids && cparams.embeddings_nextn_masked)) {
+                router_logits = build_lora_mm(layer.ffn_gate_inp, cur);
+                if ((llama_expert_gating_func_type) hparams.expert_gating_func == LLAMA_EXPERT_GATING_FUNC_TYPE_SQRT_SOFTPLUS) {
+                    ggml_prec_set_acc(router_logits, GGML_PREC_F32);
+                }
+                ggml_build_forward_expand(gf, router_logits);
+            }
 
             if (is_swa || force_rope) {
                 ggml_tensor * rope_factors = model.get_rope_factors(cparams, il);
@@ -239,7 +276,7 @@ llama_model_cohere2moe::graph::graph(const llama_model & model, const llm_graph_
                     hparams.expert_weights_scale,
                     (llama_expert_gating_func_type) hparams.expert_gating_func,
                     il,
-                    nullptr, layer.ffn_gate_up_exps,
+                    router_logits, layer.ffn_gate_up_exps,
                     layer.ffn_up_exps_s,
                     layer.ffn_gate_exps_s,
                     layer.ffn_down_exps_s);

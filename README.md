@@ -20,9 +20,11 @@ tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF
 
 The first target is the NVIDIA Tesla P100 (16 GB, sm_60), running Qwen3.8-27B-PN3: a 3-bit quantization of Qwen3.8-27B made for this card, served by a llama.cpp-based engine with kernels written for Pascal.
 
-**Status: v0.2.0 released.** The launcher, the engine image `0.2.0-sm60` and both models are published, and the published image has been measured on a real P100 for each launch target. How the pieces fit together, and how engine releases are made, is in [docs/design.md](docs/design.md).
+**Status: v0.3.0 released.** The launcher, the engine image `0.3.0-sm60` and the models of all three launch targets are published, and the published image has been measured on a real P100 for each launch target. How the pieces fit together, and how engine releases are made, is in [docs/design.md](docs/design.md).
 
-**New in v0.2.0: faster prompts.** A prefill hill climb took Qwen3.8-27B-PN3's prompt speed from 121 to 200 tok/s on a 4,100-token prompt, with the same settings and no loss of decode speed. On the published image, the first token of a 429-token prompt arrives in 2.6 s instead of 4.5 s ([receipt](docs/receipts/engine-v0.2.0/Qwen3.8-27B-PN3-GGUF-p100.md)).
+**New in v0.3.0: a third launch target.** `tensorless run unsloth/North-Mini-Code-1.0-GGUF` (short name `nmc`) runs CohereLabs' North-Mini-Code-1.0, a 30B mixture-of-experts model for code, in Unsloth's UD-IQ3_XXS file, unmodified. A decode hill climb on one P100 took it from 49 to 80 tok/s after a 4,096-token prompt, and from 36 to 66 tok/s after a 32,768-token one ([receipt](docs/receipts/engine-v0.3.0/North-Mini-Code-1.0-GGUF-p100.md)). The two Qwen3.8-27B recipes moved to the same engine with their settings unchanged, after the published image was measured with each of them.
+
+v0.2.0 made Qwen3.8-27B-PN3's prompts faster: from 121 to 200 tok/s on a 4,100-token prompt ([receipt](docs/receipts/engine-v0.2.0/Qwen3.8-27B-PN3-GGUF-p100.md)).
 
 ## Launch targets
 
@@ -30,10 +32,11 @@ Every model tensorless can launch today. Each row is a recipe: the exact engine 
 
 | Launch command | Model | Card | Engine | Decode, short context | Prefill, about 4,000 tokens | Decode, 32K / 65K | Status |
 |---|---|---|---|---:|---:|---:|---|
-| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | **Qwen3.8-27B-PN3**: Qwen3.8-27B in our own P100-native 3-bit weight format ([PN](docs/pn-format.md)), 12.1 GiB | Tesla P100 16 GB | engine-v0.2.0 | **30.4 tok/s** | **200 tok/s** | not yet measured | **released**; published image measured at **30.48 tok/s** decode and **199 tok/s** prefill |
-| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | **Qwen3.8-27B-UD-IQ3_XXS-Q3Floor**: Unsloth's Qwen3.8-27B UD-IQ3_XXS with its 91 sub-3-bit tensors re-quantized to IQ3_XXS, a 3-bit floor (standard llama.cpp types; the model the P100 kernels were first tuned on), 11.0 GiB | Tesla P100 16 GB | engine-v0.2.0 | 26.5 tok/s | 145 tok/s, on the published image | 24.5 / 22.9 tok/s, on the decode climb's starting commit | **released**; published image measured at **26.69 tok/s** decode |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | **Qwen3.8-27B-PN3**: Qwen3.8-27B in our own P100-native 3-bit weight format ([PN](docs/pn-format.md)), 12.1 GiB | Tesla P100 16 GB | engine-v0.3.0 | **30.4 tok/s** | **200 tok/s** | not yet measured | **released**; published image measured at **30.45 tok/s** decode and **195 tok/s** prefill |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | **Qwen3.8-27B-UD-IQ3_XXS-Q3Floor**: Unsloth's Qwen3.8-27B UD-IQ3_XXS with its 91 sub-3-bit tensors re-quantized to IQ3_XXS, a 3-bit floor (standard llama.cpp types; the model the P100 kernels were first tuned on), 11.0 GiB | Tesla P100 16 GB | engine-v0.3.0 | 26.5 tok/s | 142 tok/s, on the published image | 24.5 / 22.9 tok/s, on the decode climb's starting commit | **released**; published image measured at **26.53 tok/s** decode |
+| `tensorless run unsloth/North-Mini-Code-1.0-GGUF` | **North-Mini-Code-1.0 UD-IQ3_XXS**: CohereLabs' 30B mixture-of-experts model for code (8 of 128 experts per token) in Unsloth's UD-IQ3_XXS file, unmodified (standard llama.cpp types), 10.9 GiB | Tesla P100 16 GB | engine-v0.3.0 | **80 tok/s**, after a 4,096-token prompt | **446 tok/s** | **66 tok/s** at 32K; its context is 36,864 tokens | **released**; published image measured at **79.94 tok/s** decode after a 3,911-token prompt and **442 tok/s** prefill |
 
-Decode is greedy single-stream generation: "short context" is 256 tokens after a prompt of about 600 tokens, and 32K/65K is 1,024 tokens after a prompt that fills the context. Prefill is one cold prompt, timed from the request to the first token. The decode columns and Qwen3.8-27B-PN3's prefill come from the research hill climbs' judge, measured on one P100 with a source build of the engine. The status column has the published image's own measurement, taken before each recipe was marked released: decode with `tensorless bench` (256 tokens after a 429-token prompt), and prefill on a 3,744-token prompt. The receipts are in [docs/receipts/](docs/receipts/), and `tensorless models` lists the recipes your launcher knows.
+Decode is greedy single-stream generation: "short context" is 256 tokens after a prompt of about 600 tokens, and 32K/65K is 1,024 tokens after a prompt that fills the context. For North-Mini-Code-1.0 both are 256 tokens, after a cold 4,096- or 32,768-token code prompt. Prefill is one cold prompt, timed from the request to the first token. The decode columns, and the prefill of Qwen3.8-27B-PN3 and North-Mini-Code-1.0, come from the research hill climbs' judge, measured on one P100 with a source build of the engine. The status column has the published image's own measurement, taken before each recipe was marked released: decode with `tensorless bench` for the Qwen models (256 tokens after a 429-token prompt), and for North-Mini-Code-1.0 256 tokens after a 3,911-token prompt, timed the same way; prefill on a 3,651-token prompt (North-Mini-Code-1.0: 3,122). The receipts are in [docs/receipts/](docs/receipts/), and `tensorless models` lists the recipes your launcher knows.
 
 ## Quick start (Linux, Tesla P100)
 
@@ -48,7 +51,7 @@ You need:
 sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 
 # the launcher: a single static binary
-V=0.2.0
+V=0.3.0
 curl -fLO https://github.com/iammrduncan/tensorless/releases/download/v$V/tensorless-$V-linux-x86_64.tar.gz
 curl -fLO https://github.com/iammrduncan/tensorless/releases/download/v$V/tensorless-$V-linux-x86_64.tar.gz.sha256
 sha256sum -c tensorless-$V-linux-x86_64.tar.gz.sha256 && tar -xzf tensorless-$V-linux-x86_64.tar.gz

@@ -44,9 +44,9 @@ min_memory_mib     = 16000
 min_driver         = "525.60.13"
 
 [engine]
-release = "engine-v0.2.0"
+release = "engine-v0.3.0"
 arch    = "sm60"
-image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7"
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e"
 
 [run]
 alias       = "iamMrDuncan/Qwen3.8-27B-PN3-GGUF"
@@ -104,7 +104,7 @@ A GPU matches a card when its compute capability equals `compute_capability` and
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `release` | string | yes | The engine release the recipe was measured on, such as `engine-v0.2.0`. |
+| `release` | string | yes | The engine release the recipe was measured on, such as `engine-v0.3.0`. |
 | `arch` | string | yes | The GPU architecture of the image, such as `sm60`. |
 | `image` | string | yes | The engine image, always by digest: `name@sha256:<64 hex>`. A tag is refused. |
 

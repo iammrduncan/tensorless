@@ -8,9 +8,9 @@ sidebar:
 
 The engine's P100 kernels are opt-in. Each is turned on by a `GGML_CUDA_*` environment variable, which a recipe sets in its `[run.env]` table, exactly as the release gate measured it. The launcher passes them to the container with `-e`, in alphabetical order. Leaving one out, or changing its value, runs a configuration that was not measured.
 
-Both recipes set the same 21 switches with the same values, and engine-v0.2.0 did not change the set. The engine reads each one once, when it is first needed. The source files named below are under [`engine/ggml/src/ggml-cuda/`](https://github.com/iammrduncan/tensorless/tree/main/engine/ggml/src/ggml-cuda).
+All three recipes set the same 21 switches with the same values, and neither engine-v0.2.0 nor engine-v0.3.0 changed the set. The engine reads each one once, when it is first needed. The source files named below are under [`engine/ggml/src/ggml-cuda/`](https://github.com/iammrduncan/tensorless/tree/main/engine/ggml/src/ggml-cuda).
 
-The PN weight types need no switch: their kernels run whenever a tensor is `pn3t` or `pn4t`. That includes engine-v0.2.0's [PN prefill path](#the-pn-prefill-path), which is on by default.
+The PN weight types need no switch: their kernels run whenever a tensor is `pn3t` or `pn4t`. That includes engine-v0.2.0's [PN prefill path](#the-pn-prefill-path), which is on by default. engine-v0.3.0's [decode paths for North-Mini-Code-1.0](#the-north-mini-code-10-decode-path) need no switch either.
 
 ## Attention
 
@@ -67,6 +67,17 @@ Since engine-v0.2.0, a prompt's batched products of PN weights (more than 4 toke
 | `GGML_PN_GLU_OFF` | on | Set, it turns off the fused SwiGLU step, in which the second product of an FFN gate/up pair writes `silu(gate) * up` directly (`ggml-cuda.cu`). |
 
 `GGML_PN_H2_OFF=1` with `GGML_PN_TIER_LO=-1` gives fp32 arithmetic for every batched PN product. A run with any of these set is not the measured configuration.
+
+## The North-Mini-Code-1.0 decode path
+
+engine-v0.3.0's decode work for North-Mini-Code-1.0 is on by default: the hill climb's judge measured only what runs with no extra variable. It covers one-token attention over a q8_0 KV cache at head size 128, the Q6_K attention projections, the experts' GEMVs and the mixture-of-experts tail; [Receipts](receipts.md#north-mini-code-10) lists the changes. These variables turn parts of it off, for comparison:
+
+| Variable | Unset | What setting it does |
+|---|---|---|
+| `GGML_CUDA_MMV_SM60_QKV_ROUTER` | on | `0` runs the router's GEMV as its own launch, instead of as extra thread blocks of the merged Q, K and V GEMV (`mmvh-sm60.cu`). |
+| `GGML_CUDA_SWIGLU_Q8_OFF` | on | Set, the SwiGLU step no longer writes the q8_1 input of the experts' down projection, which then quantizes it itself (`ggml-cuda.cu`). |
+
+A run with either set is not the measured configuration.
 
 ## Other switches
 
