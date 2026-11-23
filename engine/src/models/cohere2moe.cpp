@@ -86,7 +86,10 @@ void llama_model_cohere2moe::load_arch_tensors(llama_model_loader & ml) {
         const ggml_tensor * q_meta = ml.get_tensor_meta(tn(LLM_TENSOR_ATTN_Q, "weight", i).str().c_str());
         const ggml_tensor * k_meta = ml.get_tensor_meta(tn(LLM_TENSOR_ATTN_K, "weight", i).str().c_str());
         const ggml_tensor * v_meta = ml.get_tensor_meta(tn(LLM_TENSOR_ATTN_V, "weight", i).str().c_str());
-        const bool fused_qkv = flags == 0 && q_meta != nullptr && k_meta != nullptr && v_meta != nullptr &&
+        // Only for a layer on a GPU: on the CPU the weights are mapped from the file tensor by tensor, and a view
+        // can't be mapped (ggml_backend_tensor_alloc asserts view_src == NULL), so a load with no card aborted.
+        const bool on_gpu = dev_layer(i) != nullptr && ggml_backend_dev_type(dev_layer(i)) != GGML_BACKEND_DEVICE_TYPE_CPU;
+        const bool fused_qkv = flags == 0 && on_gpu && q_meta != nullptr && k_meta != nullptr && v_meta != nullptr &&
                 q_meta->type == k_meta->type && q_meta->type == v_meta->type && split_mode() != LLAMA_SPLIT_MODE_ROW;
         if (fused_qkv) {
             layer.wq = create_tensor(tn(LLM_TENSOR_ATTN_Q, "weight", i), { n_embd, n_embd_head_k * n_head }, llama_model_loader::TENSOR_QKV_VIEW);

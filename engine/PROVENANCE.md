@@ -63,6 +63,7 @@ One fix was made in this repository, on top of the exported research commit. It 
 
 ## Changed after the import (engine-v0.3.0)
 
+- **A load with no GPU aborted** (`src/models/cohere2moe.cpp`): the load-time merge of a layer's Q, K and V weights into one tensor made them views of it, and on the CPU the weights are mapped from the file tensor by tensor, where a view can't be mapped (`GGML_ASSERT(tensor->view_src == NULL)` in `ggml_backend_tensor_alloc`). The merge now happens only for a layer on a GPU, so a layer on the CPU loads its three weights as before. On the P100 every layer is on the GPU, so what the judge measured is unchanged. Checked with the release's image and no GPU: the model loads and answers.
 - **A guard for the router CTAs** (`ggml/src/ggml-cuda/mmvh-sm60.cu`, `try_q6k`): the QKV-with-router launch now refuses, and its caller runs both nodes alone, when the activation pointer it would give the router is null. The checks before it already hold the router to the one-column case, so the branch is never taken and the output is unchanged; it keeps a later change to the fused-prep condition from handing the router a null pointer.
 
 The upstream license is in `LICENSE`; tensorless's own changes are Apache-2.0 (see the repository's `NOTICE`).
