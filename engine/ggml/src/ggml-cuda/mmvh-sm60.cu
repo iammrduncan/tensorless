@@ -968,6 +968,9 @@ static bool try_q6k(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, c
     const auto    ctas = [&](int R) { return ((int64_t) m + 4*R - 1) / (4*R); };
     const float * xf = fuse ? (const float *) src1->data : nullptr;
     if (rsrc0) {
+        // The router CTAs read the raw activation, which only the fused case passes. The checks at the top hold
+        // the router to that case today; this keeps a later change to `fuse` from handing the router a null pointer.
+        if (xf == nullptr) return false;
         // same R as the QKV launch alone would take, so the QKV CTAs run unchanged
         const float * rw = (const float *) rsrc0->data;
         float * ro = (float *) rdst->data;
