@@ -23,7 +23,9 @@ License obligations for the code tensorless ships are in [NOTICE](https://github
 
 ## Models and quantizations
 
-- **The Qwen team (Alibaba): [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B).** The base model of every launch target. Apache-2.0.
+- **The Qwen team (Alibaba): [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B).** The base model of the two Qwen3.8-27B launch targets. Apache-2.0.
+- **[CohereLabs](https://huggingface.co/CohereLabs): [North-Mini-Code-1.0](https://huggingface.co/CohereLabs/North-Mini-Code-1.0).** The model of the North-Mini-Code-1.0 launch target, and of the decode hill climb behind engine-v0.3.0. Apache-2.0.
+- **[Unsloth](https://huggingface.co/unsloth): [unsloth/North-Mini-Code-1.0-GGUF](https://huggingface.co/unsloth/North-Mini-Code-1.0-GGUF).** The UD-IQ3_XXS file that launch target runs, unmodified. Apache-2.0.
 - **[Unsloth](https://huggingface.co/unsloth): [unsloth/Qwen3.8-27B-GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF).** Qwen3.8-27B-UD-IQ3_XXS-Q3Floor is mostly their work:
   - about 73% of its bytes are their UD-IQ3_XXS, unchanged;
   - its `token_embd` is from their UD-IQ4_XS;

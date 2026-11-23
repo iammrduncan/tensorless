@@ -9,16 +9,29 @@ const types = (col: number) => {
   for (const l of map.layers) if (l.kind !== "nextn") for (const t of l.t) if ((t[col + 1] as number) > 1e6) c[t[col] as string] = (c[t[col] as string] ?? 0) + 1;
   return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ×${n}`).join(", ");
 };
-const about: Record<string, { what: string; types: string; rotated: string }> = {
+// The model data (read per token, weight types) covers the two Qwen3.8-27B files; North-Mini-Code-1.0's
+// types come from its recipe and its load log (docs/receipts/engine-v0.3.0/).
+const perToken = (k: string) => (map.per_token_bytes[k] / 2 ** 30).toFixed(2);
+const about: Record<string, { what: string; types: string; rotated: string; perToken?: string; long: string }> = {
   pn3: {
     what: "Qwen3.8-27B in PN, our P100-native weight format: pn3t on most weight matrices, pn4t where they need it, and 19 more raised to pn4t (the mix P0k+19).",
     types: types(3),
     rotated: `all ${map.rotation.count} PN tensors`,
+    perToken: perToken("pn3"),
+    long: "not measured yet",
   },
   q3floor: {
     what: "Unsloth's UD-IQ3_XXS of Qwen3.8-27B with its 91 sub-3-bit tensors raised to IQ3_XXS: a 3-bit floor, in standard llama.cpp types. The model the P100 kernels were first tuned on.",
     types: types(5),
     rotated: "none",
+    perToken: perToken("q3floor"),
+    long: "24.52 / 22.92 tok/s at 32K / 65K, on the decode climb's starting commit",
+  },
+  nmc: {
+    what: "CohereLabs' 30B mixture-of-experts model for code, 8 of 128 experts per token, in Unsloth's UD-IQ3_XXS file, unmodified. Tuned on this card by its own decode hill climb.",
+    types: "IQ2_S, IQ3_S (experts), Q6_K (attention, head)",
+    rotated: "none",
+    long: "66.06 tok/s after a 32,768-token prompt; its context is 36,864 tokens",
   },
 };
 const cards = recipes
@@ -30,8 +43,6 @@ const cards = recipes
     ...about[r.model.name],
     size: (r.model.size_bytes / 2 ** 30).toFixed(2),
     measured: release.measured[r.model.hf_repo],
-    receipt: r.receipt.decode_tps,
-    perToken: (map.per_token_bytes[r.model.name === "pn3" ? "pn3" : "q3floor"] / 2 ** 30).toFixed(2),
     license: r.model.license.split(" (")[0],
     cmd: `tensorless run ${r.model.hf_repo}`,
   }));
@@ -40,7 +51,7 @@ const cards = recipes
 <section class="section" id="models" aria-labelledby="models-title">
   <div class="wrap">
     <p class="label" data-reveal>Launch targets</p>
-    <h2 id="models-title" class="h2" data-reveal>Two models, one card, one engine.</h2>
+    <h2 id="models-title" class="h2" data-reveal>Three models, one card, one engine.</h2>
     <p class="lede" data-reveal>
       Each target is a recipe: one model on one card, with the exact image, file and settings that were measured. Name it by its
       Hugging Face repository, or by its short name.
@@ -53,9 +64,9 @@ const cards = recipes
             <p class="what small">{c.what}</p>
             <dl>
               <div><dt>decode, published image</dt><dd><b>{c.measured.toFixed(2)} tok/s</b></dd></div>
-              <div><dt>32K / 65K</dt><dd>{c.receipt.ctx_32k ? `${c.receipt.ctx_32k} / ${c.receipt.ctx_65k} tok/s, on the decode climb's starting commit` : "not measured yet"}</dd></div>
+              <div><dt>long context</dt><dd>{c.long}</dd></div>
               <div><dt>file</dt><dd>{c.size} GiB</dd></div>
-              <div><dt>read per token</dt><dd>{c.perToken} GiB</dd></div>
+              {c.perToken && <div><dt>read per token</dt><dd>{c.perToken} GiB</dd></div>}
               <div><dt>weight types</dt><dd class="mono">{c.types}</dd></div>
               <div><dt>inputs rotated</dt><dd>{c.rotated}</dd></div>
               <div><dt>license</dt><dd>{c.license}</dd></div>
