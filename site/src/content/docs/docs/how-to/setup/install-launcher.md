@@ -103,7 +103,7 @@ tensorless version
 ```
 
 ```text
-tensorless 0.2.0 (commit bc8d564127a625363917c84491786dd41f91d1e0), linux/amd64
+tensorless 0.3.0 (commit 011abeee0b9277141d5100d145ce479c151d37be), linux/amd64
 ```
 
 `tensorless models` lists the launch targets this launcher knows. On a machine without an NVIDIA GPU, it cannot tell whether they fit:
