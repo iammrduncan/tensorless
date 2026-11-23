@@ -1,0 +1,80 @@
+# North-Mini-Code-1.0 UD-IQ3_XXS on one Tesla P100 16 GB.
+# Unsloth's North-Mini-Code-1.0-UD-IQ3_XXS.gguf, unmodified (unsloth/North-Mini-Code-1.0-GGUF @ e306bb4bf0df610f5471d97a01de2b6e0b24d356):
+# CohereLabs' 30B mixture-of-experts coder (cohere2moe, 128 experts, 8 active), experts IQ2_S/IQ3_S, attention and head Q6_K.
+# [run] is the configuration the decode hill climb's judge measured it with, on this engine, in every block.
+# Draft until the 0.3.0-rc1 image is built, pinned below and measured on a P100 (docs/receipts/engine-v0.3.0/).
+schema = 1
+status = "draft"
+
+[model]
+name       = "nmc"
+title      = "North-Mini-Code-1.0 UD-IQ3_XXS (Unsloth)"
+hf_repo    = "unsloth/North-Mini-Code-1.0-GGUF"
+revision   = "e306bb4bf0df610f5471d97a01de2b6e0b24d356"
+file       = "North-Mini-Code-1.0-UD-IQ3_XXS.gguf"
+sha256     = "029b51f93570c4295680bf6fb138bbc51bba7c377d613f75ac4eaa6913597140"
+size_bytes = 11708375136
+license    = "Apache-2.0 (from CohereLabs/North-Mini-Code-1.0 and unsloth/North-Mini-Code-1.0-GGUF)"
+
+[card]
+id                 = "p100"
+title              = "NVIDIA Tesla P100 16 GB"
+compute_capability = "6.0"
+min_memory_mib     = 16000
+min_driver         = "525.60.13"
+
+[engine]
+release = "engine-v0.3.0"
+arch    = "sm60"
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:0000000000000000000000000000000000000000000000000000000000000000"   # placeholder: 0.3.0-rc1-sm60 is not built yet
+
+[run]
+alias       = "unsloth/North-Mini-Code-1.0-GGUF"
+context     = 36864
+threads_max = 8
+args = [
+  "-np", "1",
+  "-ngl", "99",
+  "-ctk", "q8_0", "-ctv", "q8_0",
+  "-lm", "none",
+  "-fit", "off",
+  "--threads-http", "4",
+  "-b", "512", "-ub", "512",
+  "-fa", "on",
+  "--jinja",
+]
+
+[run.env]
+GGML_CUDA_FATTN_SM60            = "1"
+GGML_CUDA_MMV_SM60              = "1"
+GGML_CUDA_FUSE_PRE_ADD          = "1"
+GGML_CUDA_MMV_SM60_XXS_STOCK    = "1"
+GGML_CUDA_SM86_IQ3_SMEM_GRID    = "1"
+GGML_CUDA_MMV_SM60_IQ3S_STOCK   = "1"
+GGML_CUDA_FATTN_SM60_CTAS       = "4"
+GGML_CUDA_MMV_SM60_XXS_KB_WIDE  = "1"
+GGML_CUDA_MMV_SM60_INPLACE_XXS  = "1"
+GGML_CUDA_MMV_SM60_INPLACE_IQ3S = "1"
+GGML_CUDA_MMV_SM60_Q4K_HEAD     = "1"
+GGML_CUDA_MMV_SM60_Q3K          = "1"
+GGML_CUDA_MMV_SM60_Q4K_DHEAD    = "1"
+GGML_CUDA_MMV_SM60_Q6K          = "1"
+GGML_CUDA_NORM_EMIT_Q8          = "1"
+GGML_CUDA_PREFILL_DEQ_F4        = "1"
+GGML_CUDA_PREFILL_REP_DIRECT    = "1"
+GGML_CUDA_PREFILL_CHUNK_GEMM    = "1"
+GGML_CUDA_PREFILL_CHUNK_STREAMS = "3"
+GGML_CUDA_SM86_GDN_COLS         = "8"
+GGML_CUDA_FATTN_TILE_OCC1       = "1"
+
+[receipt]
+source  = "decode_tps and prefill_tps: the decode hill climb's judge, on a source build of this engine's hill-climb commit (champion 23's confirmation on 5 fresh blocks; prefill from the same job's champion arm). The published image is not measured yet."
+summary = "Decode about 80 tok/s after a 4K prompt and 66 tok/s after 32K; prefill about 446 tok/s at 4K. No speculative decoding in this recipe."
+decode_tps  = { short = 79.77, ctx_32k = 66.06 }
+prefill_tps = { ctx_4k = 446.4 }
+notes = [
+  "short / ctx_32k: 256 greedy tokens after a cold 4,096- / 32,768-token code prompt, on the judge's own clock (rate after the first token); the climb's starting point read 49.28 / 35.83 on the same cell.",
+  "ctx_4k prefill: prompt tokens over time to first token of the 4,096-token prompt; 334.7 tok/s at 32,768.",
+  "Below about 8,192 tokens of context the output is bit-identical to the climb's starting point; above it, kernels chosen by context length change the summation order, inside the climb's limits (mean KL at most 0.003 nat against the starting point's own outputs).",
+  "--jinja is not part of the measured configuration; it only applies the chat template for /v1/chat/completions.",
+]
