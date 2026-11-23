@@ -14,6 +14,8 @@ void ggml_cuda_mul_mat_vec_q(ggml_backend_cuda_context & ctx,
 
 // P100 v2 K-B (mmvh-sm60.cu): sm_60 IQ3_XXS GEMV, opt-in GGML_CUDA_MMV_SM60=1. Returns false to keep the stock path.
 bool ggml_cuda_mmvh_sm60_try(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst);
+bool ggml_cuda_mmvh_sm60_try_qkv_router(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1,
+                                        ggml_tensor * dst, const ggml_tensor * rsrc0, ggml_tensor * rdst);
 
 // PN types 124/125 (pn-sm60.cu): decode GEMV over the packed PN blocks, ncols 1..4, or the fp32
 // reference kernel with GGML_CUDA_PN_REF=1. Returns false for anything else (dequant + cuBLAS takes over).

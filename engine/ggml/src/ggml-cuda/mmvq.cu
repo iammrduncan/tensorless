@@ -879,6 +879,9 @@ static constexpr __host__ __device__ int calc_rows_per_block(ggml_type type, int
                 if (type == GGML_TYPE_Q3_K) {
                     return small_k ? nwarps : 2;
                 }
+                if (type == GGML_TYPE_IQ2_S) {
+                    return small_k ? nwarps : 8;
+                }
                 return small_k ? nwarps : QC4_ROWS_1;
             }
             case 2: {
@@ -1643,6 +1646,70 @@ static __global__ void mul_mat_vec_q_indexed_rows(
     if (lane == 0) { dst[row * dst_stride] = sum; }
 }
 
+// Single-token MUL_MAT_ID IQ3_S projection with a short K (the down projection, K=768: 3 superblocks).
+// mul_mat_vec_q splits each row over the warps by K, so warp 1 adds zeros and warp 0 does all the
+// work. Here each warp owns rows_per_warp whole rows with warp 0's lane map and sum order, and there
+// is no cross-warp step: every row keeps the same partials in the same warp_reduce_sum order.
+template <int nwarps, int rows_per_warp, bool smem_grid>
+__launch_bounds__(nwarps*ggml_cuda_get_physical_warp_size(), 1)
+static __global__ void mul_mat_vec_q_iq3s_warp_rows(
+        const void * vx, const void * vy, const int32_t * ids, float * dst,
+        const uint32_t ncols_x, const uint3 nchannels_y, const uint32_t stride_row_x, const uint32_t stride_col_y,
+        const uint32_t stride_channel_x, const uint32_t stride_channel_y, const uint32_t stride_channel_dst) {
+    constexpr ggml_type type = GGML_TYPE_IQ3_S;
+    constexpr int qk  = ggml_cuda_type_traits<type>::qk;
+    constexpr int qi  = ggml_cuda_type_traits<type>::qi;
+    constexpr int vdr = get_vdr_mmvq(type);
+    constexpr int warp_size = ggml_cuda_get_physical_warp_size();
+    constexpr vec_dot_q_cuda_t vec_dot_q_cuda = get_vec_dot_q_cuda(type);
+    constexpr int blocks_per_iter = vdr * warp_size / qi;
+
+    const int tid = warp_size*threadIdx.y + threadIdx.x;
+    const int blocks_per_row_x = ncols_x / qk;
+
+    [[maybe_unused]] __shared__ uint32_t grid_s[smem_grid ? 512 : 1];
+    if constexpr (smem_grid) {
+#pragma unroll
+        for (int i = tid; i < 512; i += nwarps*warp_size) {
+            grid_s[i] = iq3s_grid[i];
+        }
+    }
+    ksigns_smem_init(tid, nwarps*warp_size);
+    __syncthreads();
+
+    ggml_cuda_pdl_sync();
+    const uint32_t channel_dst = blockIdx.y;
+    const uint32_t channel_x   = ids[channel_dst];
+    const uint32_t channel_y   = fastmodulo(channel_dst, nchannels_y);
+    const block_q8_1 * y = ((const block_q8_1 *) vy) + channel_y*stride_channel_y;
+    const int row0 = (nwarps*blockIdx.x + threadIdx.y)*rows_per_warp;
+    const int kbx_offset = channel_x*stride_channel_x + row0*stride_row_x;
+
+    float tmp[rows_per_warp] = {0.0f};
+    for (int kbx = threadIdx.x / (qi/vdr); kbx < blocks_per_row_x; kbx += blocks_per_iter) {
+        const int kby = kbx * (qk/QK8_1);
+        const int kqs = vdr * (threadIdx.x % (qi/vdr));
+#pragma unroll
+        for (int i = 0; i < rows_per_warp; ++i) {
+            const int kbx_row = kbx_offset + i*stride_row_x + kbx;
+            if constexpr (smem_grid) {
+                tmp[i] += vec_dot_iq3_s_q8_1_impl(grid_s, vx, &y[kby], kbx_row, kqs);
+            } else {
+                tmp[i] += vec_dot_q_cuda(vx, &y[kby], kbx_row, kqs);
+            }
+        }
+    }
+
+    float * out = dst + channel_dst*stride_channel_dst + row0;
+#pragma unroll
+    for (int i = 0; i < rows_per_warp; ++i) {
+        tmp[i] = warp_reduce_sum<warp_size>(tmp[i]);
+        if (threadIdx.x == i) {
+            out[i] = tmp[i];
+        }
+    }
+}
+
 template <ggml_type type>
 static void mul_mat_vec_q_switch_ncols_dst(
         const void * vx, const void * vy, const int32_t * ids, const ggml_cuda_mm_fusion_args_device fusion, float * dst,
@@ -1773,6 +1840,26 @@ static void mul_mat_vec_q_switch_ncols_dst(
         case 1: {
             // static, else MSVC lambda capture breaks the constexpr uses below
             static constexpr int c_ncols_dst = 1;
+
+            // Single-token IQ3_S MUL_MAT_ID with a short K (the down projection): each warp owns whole rows.
+            if (has_ids && type == GGML_TYPE_IQ3_S && table_id == MMVQ_PARAMETERS_GENERIC &&
+                    nsamples_x == 1 && nsamples_dst == 1 && (ncols_x % 256) == 0 && ncols_x <= 4*256 &&
+                    (nrows_x % 8) == 0 && !fusion.gate && !fusion.x_bias && !fusion.gate_bias &&
+                    !fusion.x_scale && !fusion.gate_scale) {
+                const dim3 blocks(nrows_x / 8, nchannels_dst, 1);
+                const dim3 threads(warp_size, 2, 1);
+                const ggml_cuda_kernel_launch_params launch(blocks, threads, 0, stream);
+                if (cc == GGML_CUDA_CC_PASCAL && ggml_cuda_sm86_iq3_smem_grid()) {
+                    ggml_cuda_kernel_launch(mul_mat_vec_q_iq3s_warp_rows<2, 4, true>, launch,
+                            vx, vy, ids, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y,
+                            stride_channel_x, stride_channel_y, stride_channel_dst);
+                } else {
+                    ggml_cuda_kernel_launch(mul_mat_vec_q_iq3s_warp_rows<2, 4, false>, launch,
+                            vx, vy, ids, dst, ncols_x, nchannels_y_fd, stride_row_x, stride_col_y,
+                            stride_channel_x, stride_channel_y, stride_channel_dst);
+                }
+                return;
+            }
 
             // P3.16: if this IQ3_S tensor has already been repacked (the K-B prompt pass builds the
             // side buffer), read it from the 112-byte layout instead: same bytes, 4-aligned, one
@@ -2322,11 +2409,13 @@ void ggml_cuda_mul_mat_vec_q(
 
     // Shared-quantize cache: reuse the previous quantization when the same src1 tensor is
     // consumed again in this graph eval with the same layout (see q8_cache in common.cuh).
-    // ConvRot types and MUL_MAT_ID stay uncached; oversized batches fall back too.
+    // ConvRot types stay uncached; oversized batches fall back too. MUL_MAT_ID shares the entry too: the expert
+    // gate and up projections read the same src1, and the down projection reads the SWIGLU output the GLU just
+    // quantized (ggml_cuda_try_swiglu_q8).
     auto & qc = ctx.q8_cache;
     static const bool q8_cache_disabled = getenv("GGML_CUDA_Q8CACHE") != nullptr && atoi(getenv("GGML_CUDA_Q8CACHE")) == 0;
     // Main stream only: a sibling stream could consume the buffer with no cross-stream ordering.
-    const bool q8_cacheable = !q8_cache_disabled && !convrot && ids == nullptr && q8_bytes <= (1u << 20) &&
+    const bool q8_cacheable = !q8_cache_disabled && !convrot && q8_bytes <= (1u << 20) &&
                               ctx.curr_stream_no == 0;
     // quantize_row_q8_1_cuda branches only on IQ4_XS (quantize_q8_1<true>); every other type
     // gets identical <false> bytes, so the key is the LAYOUT CLASS, not the exact type.

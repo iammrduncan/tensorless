@@ -705,6 +705,219 @@ void ggml_cuda_op_rope_fused(ggml_backend_cuda_context & ctx, ggml_tensor * rope
     ggml_cuda_op_rope_impl<true>(ctx, rope, set_rows);
 }
 
+// max over the 16 lanes of a q8_0 block (the two half-warps of a warp reduce separately)
+static __device__ __forceinline__ float q8_0_block_amax(float a) {
+#pragma unroll
+    for (int off = 8; off > 0; off >>= 1) {
+        a = fmaxf(a, __shfl_xor_sync(0xffffffff, a, off, 32));
+    }
+    return a;
+}
+
+// quantize_f32_q8_0_block for a 32-value block held as one pair per lane (lane L holds values 2L and 2L+1)
+static __device__ __forceinline__ void q8_0_block_store_pair(const float x0, const float x1, block_q8_0 * __restrict__ y, const int lane) {
+    const float amax = q8_0_block_amax(fmaxf(fabsf(x0), fabsf(x1)));
+
+    const float d  = amax / ((1 << 7) - 1);
+    const float id = d ? 1.0f/d : 0.0f;
+
+    if (lane == 0) {
+        y->d = d;
+    }
+
+    y->qs[2*lane + 0] = roundf(x0*id);
+    y->qs[2*lane + 1] = roundf(x1*id);
+}
+
+struct rope_q_kv_args {
+    // Q: n_head rows of q_ne00 values, rotated in place of q_dst
+    const float *   q_src;
+    float *         q_dst;
+    int64_t         q_s01;
+    int64_t         q_s1;
+    int             q_ne00;
+    int             q_ne01;
+    // K: one decoded token's 512-wide row, rotated and written as q8_0 into its cache row
+    const float *   k_src;
+    int64_t         k_s01;
+    const int64_t * k_row;
+    char *          k_dst;
+    int64_t         k_row_stride;
+    // V: the same row of the layer's V, written as q8_0 into its cache row
+    const float *   v_src;
+    const int64_t * v_row;
+    char *          v_dst;
+    int64_t         v_row_stride;
+
+    const int32_t * pos;
+    const float *   freq_factors;
+    int             n_dims;
+    float           theta_scale;
+    float           freq_scale;
+    float           ext_factor;
+    float           attn_factor;
+    rope_corr_dims  corr_dims;
+};
+
+// Q RoPE, and one decoded token's K RoPE with its q8_0 cache write and the layer's V q8_0 cache write, in one launch.
+// Block 0 does K and V (256 threads, one pair each; the 16 threads of a block are one 32-value q8_0 block).
+// Blocks 1.. rotate Q, one pair per thread, with the rope_norm expression.
+template <bool has_ff>
+static __global__ void k_rope_q_kv_set_rows_q8_0(const rope_q_kv_args a) {
+    if (blockIdx.x > 0) {
+        const int half_w = a.q_ne00 / 2;
+        const int p = (blockIdx.x - 1)*blockDim.x + threadIdx.x;
+        if (p >= half_w*a.q_ne01) {
+            return;
+        }
+        const int h  = p / half_w;
+        const int i0 = 2*(p % half_w);
+
+        const float theta_base  = a.pos[0]*powf(a.theta_scale, i0/2.0f);
+        const float freq_factor = has_ff ? a.freq_factors[i0/2] : 1.0f;
+
+        float cos_theta;
+        float sin_theta;
+
+        rope_yarn<true>(theta_base/freq_factor, a.freq_scale, a.corr_dims, i0, a.ext_factor, a.attn_factor, cos_theta, sin_theta);
+
+        const float x0 = a.q_src[h*a.q_s01 + i0 + 0];
+        const float x1 = a.q_src[h*a.q_s01 + i0 + 1];
+
+        a.q_dst[h*a.q_s1 + i0 + 0] = x0*cos_theta - x1*sin_theta;
+        a.q_dst[h*a.q_s1 + i0 + 1] = x0*sin_theta + x1*cos_theta;
+        return;
+    }
+
+    const int e0   = 2*threadIdx.x;      // first element of the pair in the 512-wide row
+    const int iw   = e0 % a.n_dims;      // position within the head
+    const int blk  = threadIdx.x / 16;   // q8_0 block of the row
+    const int lane = threadIdx.x % 16;
+
+    const float theta_base  = a.pos[0]*powf(a.theta_scale, iw/2.0f);
+    const float freq_factor = has_ff ? a.freq_factors[iw/2] : 1.0f;
+
+    float cos_theta;
+    float sin_theta;
+
+    rope_yarn<true>(theta_base/freq_factor, a.freq_scale, a.corr_dims, iw, a.ext_factor, a.attn_factor, cos_theta, sin_theta);
+
+    const float x0 = a.k_src[(e0/a.n_dims)*a.k_s01 + iw + 0];
+    const float x1 = a.k_src[(e0/a.n_dims)*a.k_s01 + iw + 1];
+
+    q8_0_block_store_pair(x0*cos_theta - x1*sin_theta, x0*sin_theta + x1*cos_theta,
+                          (block_q8_0 *) (a.k_dst + a.k_row[0]*a.k_row_stride) + blk, lane);
+
+    q8_0_block_store_pair(a.v_src[e0 + 0], a.v_src[e0 + 1],
+                          (block_q8_0 *) (a.v_dst + a.v_row[0]*a.v_row_stride) + blk, lane);
+}
+
+// the Q rope of the decoded token (q_rope), and K's rope (k_rope) with its q8_0 write (k_set_rows) and V's (v_set_rows)
+void ggml_cuda_op_rope_q_kv_q8_0_fused(ggml_backend_cuda_context & ctx, ggml_tensor * q_rope, ggml_tensor * k_rope,
+                                       ggml_tensor * k_set_rows, ggml_tensor * v_set_rows) {
+    const ggml_tensor * q_src = q_rope->src[0];
+    const ggml_tensor * k_src = k_rope->src[0];
+    const ggml_tensor * v_src = v_set_rows->src[0];
+
+    const int32_t * op_params = (const int32_t *) q_rope->op_params;
+
+    rope_q_kv_args a;
+
+    a.q_src  = (const float *) q_src->data;
+    a.q_dst  = (float *) q_rope->data;
+    a.q_s01  = q_src->nb[1] / sizeof(float);
+    a.q_s1   = q_rope->nb[1] / sizeof(float);
+    a.q_ne00 = (int) q_rope->ne[0];
+    a.q_ne01 = (int) q_rope->ne[1];
+
+    a.k_src        = (const float *) k_src->data;
+    a.k_s01        = k_src->nb[1] / sizeof(float);
+    a.k_row        = (const int64_t *) k_set_rows->src[1]->data;
+    a.k_dst        = (char *) k_set_rows->data;
+    a.k_row_stride = k_set_rows->nb[1];
+
+    a.v_src        = (const float *) v_src->data;
+    a.v_row        = (const int64_t *) v_set_rows->src[1]->data;
+    a.v_dst        = (char *) v_set_rows->data;
+    a.v_row_stride = v_set_rows->nb[1];
+
+    a.pos          = (const int32_t *) q_rope->src[1]->data;
+    a.freq_factors = q_rope->src[2] ? (const float *) q_rope->src[2]->data : nullptr;
+    a.n_dims       = op_params[1];
+
+    const int n_ctx_orig = op_params[4];
+
+    float freq_base;
+    memcpy(&freq_base,   op_params +  5, sizeof(float));
+    memcpy(&a.freq_scale,  op_params +  6, sizeof(float));
+    memcpy(&a.ext_factor,  op_params +  7, sizeof(float));
+    memcpy(&a.attn_factor, op_params +  8, sizeof(float));
+    float beta_fast;
+    float beta_slow;
+    memcpy(&beta_fast,   op_params +  9, sizeof(float));
+    memcpy(&beta_slow,   op_params + 10, sizeof(float));
+
+    ggml_rope_yarn_corr_dims(a.n_dims, n_ctx_orig, freq_base, beta_fast, beta_slow, a.corr_dims.v);
+
+    a.theta_scale = powf(freq_base, -2.0f / a.n_dims);
+
+    const int n_q_blocks = (a.q_ne00/2*a.q_ne01 + 255) / 256;
+    cudaStream_t stream = ctx.stream();
+
+    if (a.freq_factors != nullptr) {
+        k_rope_q_kv_set_rows_q8_0<true><<<1 + n_q_blocks, 256, 0, stream>>>(a);
+    } else {
+        k_rope_q_kv_set_rows_q8_0<false><<<1 + n_q_blocks, 256, 0, stream>>>(a);
+    }
+}
+
+struct kv_set_rows_q8_0_args {
+    const float *   k_src;
+    const int64_t * k_row;
+    char *          k_dst;
+    int64_t         k_row_stride;
+    const float *   v_src;
+    const int64_t * v_row;
+    char *          v_dst;
+    int64_t         v_row_stride;
+};
+
+// One decoded token's K and V rows (512 values each), written as q8_0 into their cache rows in one launch of 256
+// threads: thread t holds the pair 2t, 2t+1 of both rows, and the 16 threads of a block are one 32-value q8_0 block.
+static __global__ void k_kv_set_rows_q8_0(const kv_set_rows_q8_0_args a) {
+    const int e0   = 2*threadIdx.x;
+    const int blk  = threadIdx.x / 16;
+    const int lane = threadIdx.x % 16;
+
+    q8_0_block_store_pair(a.k_src[e0 + 0], a.k_src[e0 + 1],
+                          (block_q8_0 *) (a.k_dst + a.k_row[0]*a.k_row_stride) + blk, lane);
+
+    q8_0_block_store_pair(a.v_src[e0 + 0], a.v_src[e0 + 1],
+                          (block_q8_0 *) (a.v_dst + a.v_row[0]*a.v_row_stride) + blk, lane);
+}
+
+// K's q8_0 cache write (k_set_rows) and V's (v_set_rows) of a decoded token, in one launch
+void ggml_cuda_op_kv_set_rows_q8_0_fused(ggml_backend_cuda_context & ctx, ggml_tensor * k_set_rows, ggml_tensor * v_set_rows) {
+    const ggml_tensor * k_src = k_set_rows->src[0];
+    const ggml_tensor * v_src = v_set_rows->src[0];
+
+    kv_set_rows_q8_0_args a;
+
+    a.k_src        = (const float *) k_src->data;
+    a.k_row        = (const int64_t *) k_set_rows->src[1]->data;
+    a.k_dst        = (char *) k_set_rows->data;
+    a.k_row_stride = k_set_rows->nb[1];
+
+    a.v_src        = (const float *) v_src->data;
+    a.v_row        = (const int64_t *) v_set_rows->src[1]->data;
+    a.v_dst        = (char *) v_set_rows->data;
+    a.v_row_stride = v_set_rows->nb[1];
+
+    cudaStream_t stream = ctx.stream();
+
+    k_kv_set_rows_q8_0<<<1, 256, 0, stream>>>(a);
+}
+
 // fused RMS_NORM + MUL + ROPE (+ VIEW + SET_ROWS)
 // one block per row: block_reduce gives the norm scale, then each thread applies mul and rope to the elements it owns
 template <int block_size, bool has_ff, typename D>

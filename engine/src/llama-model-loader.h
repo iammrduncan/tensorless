@@ -71,6 +71,7 @@ struct llama_model_loader {
     static const int TENSOR_ALLOW_RESHAPE   = 1 << 4;
     static const int TENSOR_READ_LAZY       = 1 << 5; // read rows on demand instead of loading whole tensor; requires mmap for now
     static const int TENSOR_SSM_BETA_ALPHA_VIEW = 1 << 6; // ssm_beta / ssm_alpha as row ranges of one fused [ne0, 2*ne1] tensor, no extra bytes
+    static const int TENSOR_QKV_VIEW        = 1 << 7; // attn_q / attn_k / attn_v as row ranges of one fused [ne0, sum of ne1] tensor, no extra bytes
 
     int n_kv      = 0;
     int n_tensors = 0;

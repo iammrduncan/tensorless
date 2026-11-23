@@ -81,6 +81,9 @@ void ggml_cuda_op_geglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
 void ggml_cuda_op_swiglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
+// SWIGLU that also writes dst's q8_1 quantization (npad values per row) to q8_dst.
+void ggml_cuda_op_swiglu_q8_1(ggml_backend_cuda_context & ctx, ggml_tensor * dst, char * q8_dst, int64_t npad);
+
 void ggml_cuda_op_swiglu_oai(ggml_backend_cuda_context & ctx, ggml_tensor * dst);
 
 void ggml_cuda_op_swiglu_clamp(ggml_backend_cuda_context & ctx, ggml_tensor * dst);

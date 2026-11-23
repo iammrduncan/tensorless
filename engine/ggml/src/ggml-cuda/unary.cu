@@ -349,6 +349,41 @@ void ggml_cuda_op_swiglu(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     ggml_cuda_op_unary_gated<op_silu>(ctx, dst);
 }
 
+// SWIGLU (f32, contiguous, not swapped) that also writes the q8_1 quantization of its own output, one warp per
+// q8_1 block: the same expression as unary_gated_op_kernel and the same arithmetic as quantize_q8_1, so the bytes
+// are those the consumer's quantize would write. Blocks past ne0 (up to npad) are written as zeros.
+static __global__ void swiglu_q8_1_kernel(const float * x, const float * g, float * dst, block_q8_1 * y,
+                                          const int64_t ne0, const int64_t npad) {
+    const int64_t row = blockIdx.y;
+    const int64_t i0  = (int64_t) blockIdx.x * QK8_1 + threadIdx.x;
+    const int64_t idx = row * ne0 + i0;
+
+    float v = 0.0f;
+    if (i0 < ne0) {
+        v = op_silu(x[idx]) * g[idx];
+        dst[idx] = v;
+    }
+
+    const float amax = warp_reduce_max<QK8_1>(fabsf(v));
+    const float d    = amax / 127.0f;
+    const int8_t q   = amax == 0.0f ? 0 : roundf(v / d);
+    const float sum  = warp_reduce_sum<QK8_1>((float) q);
+
+    block_q8_1 * yb = y + row * (npad / QK8_1) + blockIdx.x;
+    yb->qs[threadIdx.x] = q;
+    if (threadIdx.x == 0) {
+        yb->ds = make_half2(d, d * sum);
+    }
+}
+
+void ggml_cuda_op_swiglu_q8_1(ggml_backend_cuda_context & ctx, ggml_tensor * dst, char * q8_dst, int64_t npad) {
+    const ggml_tensor * gate = dst->src[0];
+    const ggml_tensor * up   = dst->src[1];
+    const dim3 grid(npad / QK8_1, dst->ne[1]);
+    swiglu_q8_1_kernel<<<grid, QK8_1, 0, ctx.stream()>>>(
+        (const float *) gate->data, (const float *) up->data, (float *) dst->data, (block_q8_1 *) q8_dst, dst->ne[0], npad);
+}
+
 void ggml_cuda_op_geglu_erf(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     ggml_cuda_op_unary_gated<op_gelu_erf>(ctx, dst);
 }

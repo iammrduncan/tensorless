@@ -323,7 +323,10 @@ static __device__ __forceinline__ float vec_dot_fattn_vec_KQ_q8_0(
         const float2 * Q_ds = (const float2 *) Q_ds_v;
         const float Q_d = Q_ds[k_KQ_0/nthreads].x;
 
-        sum += vec_dot_q8_0_q8_1_impl<float, 1>(&v, &Q_q8[k_KQ_0/nthreads], K_q8_0[ib].d, Q_d);
+        // Separately rounded multiply and add (no fused multiply-add), so a lane that holds two
+        // products rounds them exactly as the one-product-per-lane mapping does.
+        const float d_KQ = __fmul_rn(__half2float(K_q8_0[ib].d), Q_d);
+        sum = __fadd_rn(sum, __fmul_rn(d_KQ, float(ggml_cuda_dp4a(v, Q_q8[k_KQ_0/nthreads], 0))));
     }
 
     return sum;
@@ -1363,7 +1366,12 @@ template <int DV, int ncols1, int ncols2>
 void launch_fattn(
     ggml_backend_cuda_context & ctx, ggml_tensor * dst, fattn_kernel_t fattn_kernel, const int nwarps, const size_t nbytes_shared,
     const int nbatch_fa, const bool need_f16_K, const bool need_f16_V, const bool stream_k, const bool use_sparse,
-    const int warp_size = WARP_SIZE
+    const int warp_size = WARP_SIZE,
+    // Kernel whose occupancy sets the KV split count. Lets a kernel that packs more work per CTA
+    // keep the split count (and thus the combine order) of the kernel it replaces.
+    const fattn_kernel_t occupancy_kernel = nullptr,
+    // Split count fixed by the caller (0: from the occupancy search). Used for long K views on the pair decode.
+    const int fixed_parallel_blocks = 0
 ) {
     constexpr int ncols = ncols1 * ncols2;
 
@@ -1575,7 +1583,7 @@ void launch_fattn(
 
     const dim3 block_dim(warp_size, nwarps, 1);
     int max_blocks_per_sm = 1; // Max. number of active blocks limited by occupancy.
-    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, fattn_kernel, block_dim.x * block_dim.y * block_dim.z, nbytes_shared));
+    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&max_blocks_per_sm, occupancy_kernel ? occupancy_kernel : fattn_kernel, block_dim.x * block_dim.y * block_dim.z, nbytes_shared));
     GGML_ASSERT(max_blocks_per_sm > 0);
     int parallel_blocks = max_blocks_per_sm;
 
@@ -1647,6 +1655,9 @@ void launch_fattn(
                 efficiency_percent_best = efficiency_percent;
                 parallel_blocks = parallel_blocks_test;
             }
+        }
+        if (fixed_parallel_blocks > 0) {
+            parallel_blocks = std::min(fixed_parallel_blocks, ntiles_KV);
         }
 
         blocks_num.x = ntiles_x;

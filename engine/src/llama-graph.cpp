@@ -1842,7 +1842,9 @@ llm_graph_qkv llm_graph_context::build_qkv(
 
     ggml_tensor * Qcur, * Kcur, * Vcur;
 
-    if (layer.wqkv) {
+    // a fused wqkv serves one-token decode; batched ubatches take the separate views of it when the layer has them (wq set),
+    // so their GEMMs keep the shapes and rounding of the separate weights
+    if (layer.wqkv && (n_tokens == 1 || !layer.wq)) {
         // fused QKV path
         ggml_tensor * qkv = build_lora_mm(layer.wqkv, cur, layer.wqkv_s);
         cb(qkv, "wqkv", il);
@@ -1860,13 +1862,15 @@ llm_graph_qkv llm_graph_context::build_qkv(
             cb(qkv, "wqkv_clamped", il);
         }
         if (reshape) {
+            // one token: each view's token stride is its own size, so Q, K and V are contiguous like the separate outputs
+            auto tok_stride = [&](int64_t n) { return n_tokens == 1 ? ggml_row_size(qkv->type, n) : qkv->nb[1]; };
             Qcur = ggml_view_3d(ctx0, qkv, n_embd_head_q, n_head_q, n_tokens,
-                ggml_row_size(qkv->type, n_embd_head_q), qkv->nb[1], 0);
+                ggml_row_size(qkv->type, n_embd_head_q), tok_stride(n_embd_q), 0);
             Kcur = ggml_view_3d(ctx0, qkv, n_embd_head_k, n_head_k, n_tokens,
-                ggml_row_size(qkv->type, n_embd_head_k), qkv->nb[1],
+                ggml_row_size(qkv->type, n_embd_head_k), tok_stride(n_embd_k),
                 ggml_row_size(qkv->type, n_embd_q));
             Vcur = ggml_view_3d(ctx0, qkv, n_embd_head_v, n_head_v, n_tokens,
-                ggml_row_size(qkv->type, n_embd_head_v), qkv->nb[1],
+                ggml_row_size(qkv->type, n_embd_head_v), tok_stride(n_embd_head_v * n_head_v),
                 ggml_row_size(qkv->type, n_embd_q + n_embd_k));
         } else {
             Qcur = ggml_view_2d(ctx0, qkv, n_embd_q, n_tokens, qkv->nb[1], 0);
