@@ -61,4 +61,12 @@ jobs:
         run: |
           pre=""
           case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --title "tensorless $GITHUB_REF_NAME" --generate-notes $pre
+          # The release's announcement (docs/releases/<version>.md) is its notes when it exists.
+          post="docs/releases/${GITHUB_REF_NAME#v}.md"
+          if [ -f "$post" ]; then
+            head -n 1 "$post" | grep -qx "tensorless $GITHUB_REF_NAME is out!" || { echo "$post must open with: tensorless $GITHUB_REF_NAME is out!"; exit 1; }
+            notes=(--notes-file "$post")
+          else
+            notes=(--generate-notes)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.sha256 --title "tensorless $GITHUB_REF_NAME" "${notes[@]}" $pre
