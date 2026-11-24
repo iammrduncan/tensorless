@@ -10,6 +10,7 @@ tensorless is licensed under Apache-2.0 (see `LICENSE` and `NOTICE`). The engine
 | [llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant), TheTom | MIT (the same notice) | `engine/LICENSE` |
 | [llamAmpere](https://github.com/JakeATX/llamAmpere), JakeATX | MIT (the same notice) | `engine/LICENSE` |
 | [exllamav3](https://github.com/turboderp-org/exllamav3), Turboderp (portions, for the EXL3 weight types) | MIT | `engine/licenses/LICENSE-exllamav3`, `LICENSES/exllamav3-MIT.txt` |
+| [LookAtMyQuant](https://github.com/ShinMegamiBoson/lookatmyquant), Shin Megami Boson (ports of its format readers, for the Inkling-2-Mini pack: `engine/ggml/include/ggml-inkling2.h`) | MIT | `LICENSES/lookatmyquant-MIT.txt` |
 
 ## Vendored into the engine (`engine/vendor/`)
 

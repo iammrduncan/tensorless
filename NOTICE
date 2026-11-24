@@ -18,6 +18,9 @@ that carry them:
   types: https://github.com/turboderp-org/exllamav3 (LICENSES/exllamav3-MIT.txt)
 - nlohmann/json, Copyright (c) 2013-2025 Niels Lohmann
   https://github.com/nlohmann/json (LICENSES/nlohmann-json-MIT.txt)
+- LookAtMyQuant, Copyright (c) 2026 Shin Megami Boson, ports of its format
+  readers for the Inkling-2-Mini pack:
+  https://github.com/ShinMegamiBoson/lookatmyquant (LICENSES/lookatmyquant-MIT.txt)
 
 Changes made for tensorless are licensed under the Apache License, Version 2.0.
 
