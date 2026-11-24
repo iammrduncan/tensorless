@@ -197,11 +197,9 @@ func (a *App) checkDisk(d *doctor, o *options, set *recipe.Set, fitting []*recip
 	if !detected {
 		candidates = set.Recipes
 	}
-	var need int64
+	var need int64 // the largest download a recipe here still needs
 	for _, r := range candidates {
-		if hfcache.Status(cache, modelFile(r)) != "yes" && r.Model.SizeBytes > need {
-			need = r.Model.SizeBytes
-		}
+		need = max(need, hfcache.Missing(cache, modelFiles(r)))
 	}
 	dir := existingAncestor(cache)
 	free, err := a.FreeSpace(dir)

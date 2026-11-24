@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,8 +57,12 @@ func (a *App) newPlan(cmd string, t *target, o *options, rt, rtNote string) *pla
 func (a *App) planPull(p *plan, rt string, r *recipe.Recipe, cache string) {
 	p.step("pull the engine image, unless '%s image inspect' finds it", rt)
 	p.cmd(rt, "pull", r.Engine.Image)
+	if r.IsPack() {
+		a.planPullPack(p, r, cache)
+		return
+	}
 
-	f := modelFile(r)
+	f := modelFiles(r)[0]
 	blob := hfcache.BlobPath(cache, f)
 	link := hfcache.SnapshotPath(cache, f)
 	if hfcache.Status(cache, f) == "yes" {
@@ -75,11 +83,56 @@ func (a *App) planPull(p *plan, rt string, r *recipe.Recipe, cache string) {
 	p.line("link %s -> %s", link, hfcache.LinkTarget(f))
 }
 
-func (a *App) planServe(p *plan, rt string, spec container.Spec, t *target, o *options, pulled bool) {
+// planPullPack shows the download of every file of a pack.
+func (a *App) planPullPack(p *plan, r *recipe.Recipe, cache string) {
+	files := modelFiles(r)
+	cached := 0
+	for _, f := range files {
+		if hfcache.Status(cache, f) == "yes" {
+			cached++
+		}
+	}
+	total := "size unknown: a size_bytes is 0"
+	if !contains(r.Unpublished(), "size_bytes") {
+		total = hfcache.FormatBytes(r.TotalBytes())
+	}
+	if cached == len(files) {
+		p.step("the model pack's %d files are in the cache (%s): verify each one's sha256 (once) and link it into the snapshot", len(files), total)
+	} else {
+		p.step("download the model pack, %d files and %s (%d of them cached, %s to download), resuming partial downloads, and check each file's sha256",
+			len(files), total, cached, hfcache.FormatBytes(hfcache.Missing(cache, files)))
+		if a.getenv("HF_TOKEN") != "" {
+			p.line("with Authorization: Bearer (HF_TOKEN, not shown)")
+		}
+	}
+	for _, f := range files {
+		if hfcache.Status(cache, f) == "yes" {
+			p.line("verify %s", hfcache.BlobPath(cache, f))
+			continue
+		}
+		p.line("GET %s", hfcache.URL(a.getenv("HF_ENDPOINT"), f))
+		p.line("    into %s", hfcache.BlobPath(cache, f))
+	}
+	p.line("link each file into %s, as <name> -> ../../blobs/<sha256>",
+		hfcache.SnapshotDir(cache, r.Repo(), r.Model.Revision))
+}
+
+func (a *App) planServe(p *plan, rt string, l *launch, t *target, o *options, pulled bool) {
+	spec := l.spec
 	if !pulled {
-		p.step("check that the image is pulled and the model is cached and verified (else: tensorless pull %s)", modelArg(t, o))
+		what := "the model is cached and verified"
+		if l.prepare != nil {
+			what = fmt.Sprintf("the model pack's %d files are cached and verified", len(l.files))
+		}
+		p.step("check that the image is pulled and %s (else: tensorless pull %s)", what, modelArg(t, o))
 		p.cmd(rt, "image", "inspect", spec.Image)
-		p.line("verify %s", spec.ModelPath)
+		for _, b := range l.blobs {
+			p.line("verify %s", b)
+		}
+	}
+	if ps := l.prepare; ps != nil {
+		p.step("prepare the pack: empty %s, then run the recipe's prepare step in the engine image, with no GPU and no network; the last line it prints is the server's -m", ps.OutDir)
+		p.cmd(append([]string{rt}, ps.RunArgs()...)...)
 	}
 	p.step("start the server")
 	p.cmd(append([]string{rt}, spec.RunArgs()...)...)
@@ -113,12 +166,17 @@ func (a *App) cmdPull(ctx context.Context, o *options) error {
 	if err := a.pullImage(ctx, rt, t.r.Engine.Image); err != nil {
 		return err
 	}
-	blob, err := a.pullModel(ctx, t, cache)
+	blobs, err := a.pullModel(ctx, t, cache)
 	if err != nil {
 		return err
 	}
+	model := blobs[0]
+	if t.r.IsPack() {
+		model = fmt.Sprintf("%d files (%s) in %s", len(blobs), hfcache.FormatBytes(t.r.TotalBytes()),
+			hfcache.SnapshotDir(cache, t.r.Repo(), t.r.Model.Revision))
+	}
 	fmt.Fprintf(a.Stdout, "pulled %s for %s\n  image: %s\n  model: %s\nstart it with: tensorless serve %s\n",
-		t.r.Repo(), t.r.Card.ID, t.r.Engine.Image, blob, modelArg(t, o))
+		t.r.Repo(), t.r.Card.ID, t.r.Engine.Image, model, modelArg(t, o))
 	return nil
 }
 
@@ -137,14 +195,18 @@ func (a *App) pullImage(ctx context.Context, rt, image string) error {
 	return nil
 }
 
-func (a *App) pullModel(ctx context.Context, t *target, cache string) (string, error) {
+func (a *App) pullModel(ctx context.Context, t *target, cache string) ([]string, error) {
 	r := t.r
-	fmt.Fprintf(a.Stderr, "model %s from %s at %s\n", r.Model.File, r.Model.HFRepo, r.Model.Revision[:12])
-	blob, err := a.downloader().Fetch(ctx, cache, modelFile(r))
+	if r.IsPack() {
+		fmt.Fprintf(a.Stderr, "model pack %s at %s: %d files, %s\n", r.Model.HFRepo, r.Model.Revision[:12], len(r.Files()), hfcache.FormatBytes(r.TotalBytes()))
+	} else {
+		fmt.Fprintf(a.Stderr, "model %s from %s at %s\n", r.Model.File, r.Model.HFRepo, r.Model.Revision[:12])
+	}
+	blobs, err := a.downloader().FetchAll(ctx, cache, modelFiles(r))
 	if err != nil && t.pinned != "" && strings.Contains(err.Error(), "sha256 mismatch") {
 		err = fmt.Errorf("%w. The file at revision %s is not the one the recipe pins at %s", err, r.Model.Revision, t.pinned)
 	}
-	return blob, err
+	return blobs, err
 }
 
 func (a *App) cmdServe(ctx context.Context, o *options) error { return a.serve(ctx, o, false) }
@@ -169,16 +231,17 @@ func (a *App) serve(ctx context.Context, o *options, pull bool) error {
 	if err != nil {
 		return err
 	}
-	spec, err := a.spec(t, o, rt, hfcache.BlobPath(cache, modelFile(t.r)))
+	l, err := a.launch(t, o, rt, cache)
 	if err != nil {
 		return err
 	}
+	spec := l.spec
 	if o.dryRun {
 		p := a.newPlan(cmd, t, o, rt, rtNote)
 		if pull {
 			a.planPull(p, rt, t.r, cache)
 		}
-		a.planServe(p, rt, spec, t, o, pull)
+		a.planServe(p, rt, l, t, o, pull)
 		return nil
 	}
 	if why := untuned(t, o); why != "" {
@@ -199,28 +262,68 @@ func (a *App) serve(ctx context.Context, o *options, pull bool) error {
 		}
 	}
 
-	var blob string
 	if pull {
 		if err := a.pullImage(ctx, rt, t.r.Engine.Image); err != nil {
 			return err
 		}
-		if blob, err = a.pullModel(ctx, t, cache); err != nil {
+		if _, err = a.pullModel(ctx, t, cache); err != nil {
 			return err
 		}
 	} else {
 		if !container.ImagePresent(ctx, a.Runner, rt, t.r.Engine.Image) {
 			return fmt.Errorf("the engine image is not pulled. Run: tensorless pull %s", modelArg(t, o))
 		}
-		blob, err = a.downloader().Verify(ctx, cache, modelFile(t.r))
+		_, err = a.downloader().VerifyAll(ctx, cache, l.files)
 		if errors.Is(err, hfcache.ErrNotCached) {
-			return fmt.Errorf("the model is not downloaded. Run: tensorless pull %s", modelArg(t, o))
+			what := "the model is"
+			if t.r.IsPack() {
+				what = "the model pack is not complete or"
+			}
+			return fmt.Errorf("%s not downloaded. Run: tensorless pull %s", what, modelArg(t, o))
 		}
 		if err != nil {
 			return err
 		}
 	}
-	spec.ModelPath = blob
+	if l.prepare != nil {
+		if spec.Model, err = a.runPrepare(ctx, rt, *l.prepare); err != nil {
+			return err
+		}
+	}
 	return a.startAndWait(ctx, rt, spec, t, o)
+}
+
+// runPrepare empties the pack's output folder, runs the prepare step and
+// returns the file it printed last, a path in container.Prepared.
+func (a *App) runPrepare(ctx context.Context, rt string, ps container.PrepareSpec) (string, error) {
+	if err := os.RemoveAll(ps.OutDir); err != nil {
+		return "", fmt.Errorf("could not empty %s for the prepare step: %v. Remove it, then try again", ps.OutDir, err)
+	}
+	if err := os.MkdirAll(ps.OutDir, 0o755); err != nil {
+		return "", fmt.Errorf("could not make %s for the prepare step: %v", ps.OutDir, err)
+	}
+	fmt.Fprintf(a.Stderr, "preparing the pack in %s: %s\n", ps.OutDir, shellJoin(ps.Command))
+	var out bytes.Buffer
+	if err := a.Runner.Run(ctx, io.MultiWriter(&out, a.Stderr), a.Stderr, rt, ps.RunArgs()...); err != nil {
+		if ctx.Err() != nil {
+			return "", errInterrupted
+		}
+		return "", fmt.Errorf("the pack's prepare step failed: %v. Its output is above", err)
+	}
+	var last string
+	for _, line := range strings.Split(out.String(), "\n") {
+		if l := strings.TrimSpace(line); l != "" {
+			last = l
+		}
+	}
+	rel, ok := strings.CutPrefix(path.Clean(last), container.Prepared+"/")
+	if !strings.HasPrefix(last, "/") || !ok || rel == "" {
+		return "", fmt.Errorf("the pack's prepare step printed %q last, not a file in %s; the recipe's prepare command must print the file to serve last", last, container.Prepared)
+	}
+	if fi, err := os.Stat(filepath.Join(ps.OutDir, filepath.FromSlash(rel))); err != nil || !fi.Mode().IsRegular() {
+		return "", fmt.Errorf("the pack's prepare step printed %s, but there is no such file in %s", last, ps.OutDir)
+	}
+	return path.Clean(last), nil
 }
 
 var (

@@ -90,7 +90,7 @@ GET https://huggingface.co/iamMrDuncan/Qwen3.8-27B-PN3-GGUF/resolve/c701b6690ec3
     into /home/you/.cache/huggingface/hub/models--iamMrDuncan--Qwen3.8-27B-PN3-GGUF/blobs/15ce2d4469673f1f1753c55de3780cfe04311dd6f05cb41633d73df128e91476
 ```
 
-It goes on with the snapshot link, the full `podman run` command, and how it waits for the server. This example ran on a machine without the card, so `--card p100` chose the recipe. On a P100 host, leave `--card` out: the `gpu:` line then names the GPU that matched.
+It goes on with the snapshot link, the full `podman run` command, and how it waits for the server. For a model that is a pack of files, it lists a `GET` for each file still to download and, before the server's command, the prepare step's own `podman run`; the server's `-m` then shows as `'<the file the prepare step prints>'`, because that file is only known once the step has run. This example ran on a machine without the card, so `--card p100` chose the recipe. On a P100 host, leave `--card` out: the `gpu:` line then names the GPU that matched.
 
 A dry run still asks `nvidia-smi` for the GPU list, so it shows what would happen on this host. Without a GPU, `--dry-run` and `info` fall back to the model's only recipe; pass `--card p100` to choose it yourself.
 

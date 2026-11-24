@@ -13,7 +13,7 @@ A recipe is a small TOML file: one model on one card. To try other settings, ano
 You need:
 
 - the `tensorless` launcher (see [Install the launcher](../setup/install-launcher.md));
-- for a new model: its Hugging Face repository, the commit to pin, the GGUF file's name, its sha256 and its exact size in bytes;
+- for a new model: its Hugging Face repository, the commit to pin, the GGUF file's name, its sha256 and its exact size in bytes (for a model that is a pack of files, each file's name, sha256 and size, and the command that prepares them);
 - the [Recipe file](../../reference/recipes.md) reference open beside you.
 
 ## 1. Make a recipes directory
@@ -39,7 +39,7 @@ status = "draft"
 Then make your change. For example:
 
 - **Other settings:** edit `[run]` (`context`, `args`) or `[run.env]` (the [engine switches](../../reference/engine-switches.md)).
-- **Another model:** put the file under that model's `<org>/<repo>/` directory, and fill in `[model]`: `hf_repo` (the same as the directory), `revision` (a 40-character commit, not a branch), `file`, `sha256`, `size_bytes` and `license`. Change `run.alias` to the new repo id, and `model.name` to a short name of its own, or remove it.
+- **Another model:** put the file under that model's `<org>/<repo>/` directory, and fill in `[model]`: `hf_repo` (the same as the directory), `revision` (a 40-character commit, not a branch), `file`, `sha256`, `size_bytes` and `license`. Change `run.alias` to the new repo id, and `model.name` to a short name of its own, or remove it. A model that is several files read in place takes a `[model.pack]` table instead of `file`, `sha256` and `size_bytes`; see [Recipe file](../../reference/recipes.md#modelpack).
 - **Your own engine build:** push it to a registry you control, and set `[engine].image` to `<registry>/<name>@sha256:<digest>`. A tag is refused.
 
 To get a file's sha256 and size from a copy you downloaded:

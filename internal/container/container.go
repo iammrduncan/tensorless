@@ -55,26 +55,56 @@ func Name(repo string) string {
 	return "tensorless-" + string(b)
 }
 
-// Spec is everything needed to start the server container.
-type Spec struct {
-	Runtime   string // podman or docker
-	Name      string
-	Image     string
-	Host      string // host address the port is published on
-	Port      int    // host port
-	ModelPath string // the model file on the host (the blob)
-	ModelFile string // its base name inside the container, under /models
-	Threads   int
-	Env       map[string]string
-	Context   int
-	Alias     string
-	Args      []string // the recipe's llama-server arguments
-	Extra     []string // extra arguments from the command line
-	GPU       int      // AllGPUs, or one GPU index
+// Where a pack and its prepared file are mounted inside the container.
+const (
+	// PackRepo is the model repository's cache folder,
+	// {cache}/models--{org}--{name}, mounted read-only. The pack's folder is
+	// its snapshots/{revision}, whose links into blobs/ resolve inside it.
+	PackRepo = "/models/repo"
+	// Prepared is the prepare step's output folder: writable while the
+	// prepare step runs, read-only for the server.
+	Prepared = "/models/prepared"
+)
+
+// PackDir is the pack's folder inside the container for revision.
+func PackDir(revision string) string { return PackRepo + "/snapshots/" + revision }
+
+// ModelFilePath is where a one-file model is mounted inside the container:
+// /models/{base name}.
+func ModelFilePath(base string) string { return "/models/" + base }
+
+// Mount is a bind mount of a host path into the container.
+type Mount struct {
+	Host      string
+	Container string
+	Writable  bool // else read-only
 }
 
-// ContainerModelPath is where the model is mounted inside the container.
-func (s Spec) ContainerModelPath() string { return "/models/" + s.ModelFile }
+func (m Mount) arg() string {
+	v := m.Host + ":" + m.Container
+	if !m.Writable {
+		v += ":ro"
+	}
+	return v
+}
+
+// Spec is everything needed to start the server container.
+type Spec struct {
+	Runtime string // podman or docker
+	Name    string
+	Image   string
+	Host    string  // host address the port is published on
+	Port    int     // host port
+	Mounts  []Mount // the model's files, read-only
+	Model   string  // the -m path inside the container
+	Threads int
+	Env     map[string]string
+	Context int
+	Alias   string
+	Args    []string // the recipe's llama-server arguments
+	Extra   []string // extra arguments from the command line
+	GPU     int      // AllGPUs, or one GPU index
+}
 
 // RunArgs is the argv after the runtime name: run -d --rm ... IMAGE <server args>.
 // The image's entrypoint is llama-server.
@@ -93,11 +123,11 @@ func (s Spec) RunArgs() []string {
 	} else {
 		a = append(a, "--device", "nvidia.com/gpu="+gpu, "--security-opt", "label=disable")
 	}
-	a = append(a,
-		"-p", PublishArg(s.Host, s.Port),
-		"-v", s.ModelPath+":"+s.ContainerModelPath()+":ro",
-		"-e", "OMP_NUM_THREADS="+strconv.Itoa(s.Threads),
-	)
+	a = append(a, "-p", PublishArg(s.Host, s.Port))
+	for _, m := range s.Mounts {
+		a = append(a, "-v", m.arg())
+	}
+	a = append(a, "-e", "OMP_NUM_THREADS="+strconv.Itoa(s.Threads))
 	keys := make([]string, 0, len(s.Env))
 	for k := range s.Env {
 		keys = append(keys, k)
@@ -107,7 +137,7 @@ func (s Spec) RunArgs() []string {
 		a = append(a, "-e", k+"="+s.Env[k])
 	}
 	a = append(a, s.Image,
-		"-m", s.ContainerModelPath(),
+		"-m", s.Model,
 		"--host", "0.0.0.0",
 		"--port", strconv.Itoa(ServerPort),
 		"-c", strconv.Itoa(s.Context),
@@ -117,6 +147,34 @@ func (s Spec) RunArgs() []string {
 	)
 	a = append(a, s.Args...)
 	return append(a, s.Extra...)
+}
+
+// PrepareSpec is the run of a pack's prepare step: in the engine image, with
+// the recipe's command as the entrypoint and its arguments, then the pack's
+// folder and the output folder. It gets no GPU and no network.
+type PrepareSpec struct {
+	Runtime  string // podman or docker
+	Image    string
+	Command  []string // the recipe's model.pack.prepare
+	RepoDir  string   // the repository's cache folder on the host
+	OutDir   string   // the output folder on the host
+	Revision string
+}
+
+// RunArgs is the argv after the runtime name: run --rm ... IMAGE <args>.
+func (p PrepareSpec) RunArgs() []string {
+	a := []string{"run", "--rm", "--network", "none"}
+	if p.Runtime != "docker" {
+		a = append(a, "--security-opt", "label=disable")
+	}
+	a = append(a,
+		"-v", Mount{Host: p.RepoDir, Container: PackRepo}.arg(),
+		"-v", Mount{Host: p.OutDir, Container: Prepared, Writable: true}.arg(),
+		"--entrypoint", p.Command[0],
+		p.Image,
+	)
+	a = append(a, p.Command[1:]...)
+	return append(a, PackDir(p.Revision), Prepared)
 }
 
 // PublishArg is the -p value HOST:PORT:8080, with brackets for IPv6.

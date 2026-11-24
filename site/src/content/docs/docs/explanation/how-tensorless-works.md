@@ -45,7 +45,7 @@ flowchart TD
 2. **It finds the recipe.** The model argument is a Hugging Face repo id. The launcher looks for that repository's recipe for the detected card, such as `recipes/iamMrDuncan/Qwen3.8-27B-PN3-GGUF/p100.toml`. The recipes are built into the launcher, so a new model arrives with a new launcher release.
 3. **It checks the recipe can run here.** The card's compute capability must equal the recipe's, its memory must be at least the recipe's minimum, and the driver must be at least `min_driver`. A draft recipe, or one with placeholder values, is refused.
 4. **It pulls the image by digest.** Not by tag: a tag can be moved, a digest cannot.
-5. **It downloads the model** into the Hugging Face cache, at the commit the recipe pins, and checks its sha256. Other Hugging Face tools can read the same file.
+5. **It downloads the model** into the Hugging Face cache, at the commit the recipe pins, and checks its sha256. Other Hugging Face tools can read the same file. A model that is a pack of files is downloaded and checked file by file; before each serve, a short prepare step in the same image writes the small file that tells the engine where each of the pack's arrays is, and the engine reads the pack in place.
 6. **It starts the container** with the model mounted read-only, the recipe's engine switches as environment variables, and the recipe's `llama-server` flags.
 7. **It waits for the server** to report healthy, then prints the address. From there it is a normal OpenAI-compatible server: `/v1/chat/completions`, `/v1/completions`, `/v1/models`.
 

@@ -60,10 +60,10 @@ Runs `pull`, then `serve`. Arguments after `--` go to `llama-server` after the r
 tensorless pull iamMrDuncan/Qwen3.8-27B-PN3-GGUF
 ```
 
-Pulls the engine image by digest (skipped if `podman image inspect` finds it). Downloads the model into the Hugging Face cache, verifies its sha256 and links it into the snapshot.
+Pulls the engine image by digest (skipped if `podman image inspect` finds it). Downloads the model into the Hugging Face cache, verifies its sha256 and links it into the snapshot. For a model that is a pack of files (a recipe with `[model.pack]`), it does the same for each file.
 
 - **Resuming:** an interrupted download resumes where it stopped. Run the same command again.
-- **Disk space:** it checks the free space first.
+- **Disk space:** it checks the free space first, for all the files still to download.
 - **Already cached:** a file that is already in the cache is hashed once. After that, a marker in the state directory skips the hash while the file's size and modification time stay the same.
 
 ### serve
@@ -98,6 +98,17 @@ podman run -d --rm --name tensorless-iammrduncan-qwen3.8-27b-pn3-gguf \
 ```
 
 When the host has GPUs that do not match the recipe, the container gets only the matched one (`nvidia.com/gpu=N`), so `llama-server` cannot land on a card the image was not built for. `tensorless info` and `--dry-run` show the exact command.
+
+For a pack, `serve` first runs the recipe's prepare step, once per serve, in the same image with no GPU and no network. It empties the output folder `OUT`, `$XDG_STATE_HOME/tensorless/prepared/ORG--REPO/CARD/<revision>-<image digest>/` (12 characters of each), and runs:
+
+```sh
+podman run --rm --network none --security-opt label=disable \
+    -v CACHE/models--ORG--REPO:/models/repo:ro -v OUT:/models/prepared \
+    --entrypoint PREPARE[0] IMAGE@sha256:... PREPARE[1:] \
+    /models/repo/snapshots/REVISION /models/prepared
+```
+
+The last line it prints is a file in `/models/prepared`. The server then starts as above, with `-v CACHE/models--ORG--REPO:/models/repo:ro -v OUT:/models/prepared:ro` instead of the model file's mount, and `-m` set to that file. The repository's whole cache folder is mounted so that the snapshot's links into `blobs/` resolve, and at the same path in both runs, because the prepared file may name the pack's folder.
 
 ### stop
 
@@ -191,7 +202,7 @@ The commands that take a MODEL accept these flags before or after it.
 Two kinds of recipe are refused:
 
 - **A draft** (status `draft`) is refused unless you pass `--allow-draft`.
-- **A recipe that is not published yet**, whose revision or image digest is all zeros or whose `size_bytes` is 0, is refused for `pull`, `run` and `serve` even with `--allow-draft`. `info` and `--dry-run` still show it.
+- **A recipe that is not published yet**, whose revision, sha256 or image digest is all zeros or whose `size_bytes` is 0 (in a pack, of any file), is refused for `pull`, `run` and `serve` even with `--allow-draft`. `info` and `--dry-run` still show it.
 
 ## Where files go
 
@@ -199,6 +210,7 @@ Two kinds of recipe are refused:
 |---|---|
 | Model files | The Hugging Face cache: `--cache`, else `$HF_HUB_CACHE`, else `$HF_HOME/hub`, else `~/.cache/huggingface/hub`. The file is at `models--ORG--REPO/blobs/<sha256>`, with the symlink `models--ORG--REPO/snapshots/<revision>/<file>` pointing to it, so other Hugging Face tools see it. A partial download is `<blob>.incomplete`. |
 | Verification markers | `$XDG_STATE_HOME/tensorless/verified/<sha256>.json`, else `~/.local/state/tensorless/verified/`. |
+| A pack's prepared files | `$XDG_STATE_HOME/tensorless/prepared/ORG--REPO/CARD/<revision>-<image digest>/`, else under `~/.local/state/tensorless/prepared/`. Emptied before each prepare step. |
 | Engine images | The container runtime's own storage. |
 | Containers | `tensorless-<repo id, lowercased, with / replaced by ->`, started with `--rm`. |
 

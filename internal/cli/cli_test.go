@@ -57,6 +57,8 @@ type host struct {
 	logs         string
 	exitAtStart  bool // the container dies right after run
 	dockerInfo   string
+	// prepare answers a run without -d: a pack's prepare step.
+	prepare func(args []string, stdout, stderr io.Writer) error
 }
 
 func (h *host) fn(ctx context.Context, name string, args []string, stdout, stderr io.Writer) error {
@@ -88,6 +90,11 @@ func (h *host) fn(ctx context.Context, name string, args []string, stdout, stder
 		}
 		return errors.New("no such container")
 	case "run":
+		if args[1] == "--rm" && h.prepare != nil {
+			prepare := h.prepare
+			h.mu.Unlock()
+			return prepare(args, stdout, stderr)
+		}
 		for i, a := range args {
 			if a == "--name" {
 				h.running[args[i+1]] = !h.exitAtStart
@@ -241,17 +248,26 @@ func embedded(t *testing.T) []*recipe.Recipe {
 
 // placeholders lists r's placeholder fields, worked out from its values.
 func placeholders(r *recipe.Recipe) []string {
+	files := []recipe.PackFile{{SHA256: r.Model.SHA256, SizeBytes: r.Model.SizeBytes}}
+	if r.Model.Pack != nil {
+		files = r.Model.Pack.Files
+	}
+	var zeroSHA, zeroSize bool
+	for _, f := range files {
+		zeroSHA = zeroSHA || f.SHA256 == strings.Repeat("0", 64)
+		zeroSize = zeroSize || f.SizeBytes == 0
+	}
 	var out []string
 	if r.Model.Revision == strings.Repeat("0", 40) {
 		out = append(out, "revision")
 	}
-	if r.Model.SHA256 == strings.Repeat("0", 64) {
+	if zeroSHA {
 		out = append(out, "sha256")
 	}
 	if strings.HasSuffix(r.Engine.Image, "@sha256:"+strings.Repeat("0", 64)) {
 		out = append(out, "image digest")
 	}
-	if r.Model.SizeBytes == 0 {
+	if zeroSize {
 		out = append(out, "size_bytes")
 	}
 	return out
@@ -364,8 +380,21 @@ func TestInfoWithNoGPU(t *testing.T) {
 			t.Errorf("%s: unpublished = %v, want %v", r.ID(), info.Unpublished, ph)
 		}
 		// The cache keeps the recipe's case, whatever case was typed.
-		if want := filepath.Join("models--"+strings.ReplaceAll(r.Repo(), "/", "--"), "blobs", r.Model.SHA256); !strings.HasSuffix(info.Download.Blob, want) {
-			t.Errorf("%s: blob = %s, want .../%s", r.ID(), info.Download.Blob, want)
+		downloads := []infoDownload{info.Download}
+		if r.IsPack() {
+			downloads = info.Download.Files
+			if want := filepath.Join("models--"+strings.ReplaceAll(r.Repo(), "/", "--"), "snapshots", r.Model.Revision); !strings.HasSuffix(info.Download.Snapshot, want) ||
+				info.Download.Size != r.TotalBytes() || len(info.Prepare) == 0 {
+				t.Errorf("%s: pack download = %+v, prepare %q", r.ID(), info.Download, info.Prepare)
+			}
+		}
+		if len(downloads) != len(r.Files()) {
+			t.Fatalf("%s: %d downloads for %d files", r.ID(), len(downloads), len(r.Files()))
+		}
+		for i, f := range r.Files() {
+			if want := filepath.Join("models--"+strings.ReplaceAll(r.Repo(), "/", "--"), "blobs", f.SHA256); !strings.HasSuffix(downloads[i].Blob, want) {
+				t.Errorf("%s: blob = %s, want .../%s", r.ID(), downloads[i].Blob, want)
+			}
 		}
 		cmd := strings.Join(info.Command, " ")
 		for _, want := range []string{"--name " + container.Name(r.Repo()), "--alias " + r.Run.Alias, " " + r.Engine.Image + " "} {
@@ -379,7 +408,7 @@ func TestInfoWithNoGPU(t *testing.T) {
 			t.Fatalf("%s: exit %d: %s", r.ID(), code, ta.stderr)
 		}
 		out := ta.stdout.String()
-		wants := []string{r.Repo() + " on " + r.Card.ID, "unknown (nvidia-smi not found)", r.Engine.Image, r.Model.SHA256}
+		wants := []string{r.Repo() + " on " + r.Card.ID, "unknown (nvidia-smi not found)", r.Engine.Image, r.Files()[0].SHA256}
 		if r.Receipt.Summary != "" {
 			wants = append(wants, r.Receipt.Summary)
 		}
@@ -407,18 +436,30 @@ func TestRunDryRunOnEmbeddedRecipes(t *testing.T) {
 			t.Fatalf("%s: exit %d: %s", r.ID(), code, ta.stderr)
 		}
 		out := flatten(ta.stdout.String())
-		f := modelFile(r)
 		wants := []string{
 			"dry run of 'tensorless run " + r.Repo() + "'",
 			"podman pull " + r.Engine.Image,
-			"GET " + hfcache.URL("", f),
-			filepath.Join("models--"+strings.ReplaceAll(r.Repo(), "/", "--"), "blobs", r.Model.SHA256),
-			filepath.Join("snapshots", r.Model.Revision, r.Model.File) + " -> " + hfcache.LinkTarget(f),
-			"podman run -d --rm --name " + container.Name(r.Repo()) + " --device nvidia.com/gpu=all",
-			"--alias " + r.Run.Alias,
-			fmt.Sprintf("-t %d -tb %d", min(6, r.Run.ThreadsMax), min(6, r.Run.ThreadsMax)),
-			"podman logs -f " + container.Name(r.Repo()),
 		}
+		for _, f := range modelFiles(r) {
+			wants = append(wants, "GET "+hfcache.URL("", f)+"\n",
+				filepath.Join("models--"+strings.ReplaceAll(r.Repo(), "/", "--"), "blobs", f.SHA256)+"\n")
+		}
+		if r.IsPack() {
+			wants = append(wants, "link each file into "+filepath.Join("snapshots", r.Model.Revision)+", as <name> -> ../../blobs/<sha256>",
+				"podman run --rm --network none --security-opt label=disable -v ",
+				"--entrypoint "+r.Model.Pack.Prepare[0]+" "+r.Engine.Image+" ",
+				" /models/repo/snapshots/"+r.Model.Revision+" /models/prepared\n",
+				"-m '<the file the prepare step prints>'")
+		} else {
+			f := modelFiles(r)[0]
+			wants = append(wants, filepath.Join("snapshots", r.Model.Revision, r.Model.File)+" -> "+hfcache.LinkTarget(f))
+		}
+		wants = append(wants,
+			"podman run -d --rm --name "+container.Name(r.Repo())+" --device nvidia.com/gpu=all",
+			"--alias "+r.Run.Alias,
+			fmt.Sprintf("-t %d -tb %d", min(6, r.Run.ThreadsMax), min(6, r.Run.ThreadsMax)),
+			"podman logs -f "+container.Name(r.Repo()),
+		)
 		if len(ph) > 0 {
 			wants = append(wants, "NOT PUBLISHED: the recipe's "+joinAnd(ph))
 		}

@@ -1,6 +1,6 @@
 ---
 title: "Files and environment variables"
-description: "Where tensorless keeps models, verification markers and containers, and every environment variable the launcher and the install script read."
+description: "Where tensorless keeps models, verification markers, a pack's prepared files and containers, and every environment variable the launcher and the install script read."
 type: reference
 sidebar:
   order: 8
@@ -12,12 +12,13 @@ sidebar:
 |---|---|
 | Model cache | `--cache DIR`, else `$HF_HUB_CACHE`, else `$HF_HOME/hub`, else `~/.cache/huggingface/hub`. The path is made absolute, because the container mounts it. It must not contain `:`. |
 | Model file | `<cache>/models--<org>--<repo>/blobs/<sha256>`. For example `~/.cache/huggingface/hub/models--iamMrDuncan--Qwen3.8-27B-PN3-GGUF/blobs/15ce2d44…`. |
-| Snapshot link | `<cache>/models--<org>--<repo>/snapshots/<revision>/<file>`, a relative symlink to the blob, so other Hugging Face tools find the file. |
+| Snapshot link | `<cache>/models--<org>--<repo>/snapshots/<revision>/<file>`, a relative symlink to the blob, so other Hugging Face tools find the file. A pack has one per file, all in the snapshot folder. |
 | Partial download | `<blob>.incomplete`. The next `pull` or `run` resumes it. |
 | Verification markers | `$XDG_STATE_HOME/tensorless/verified/<sha256>.json`, else `~/.local/state/tensorless/verified/<sha256>.json`. |
+| A pack's prepared files | `$XDG_STATE_HOME/tensorless/prepared/<org>--<repo>/<card>/<revision>-<image digest>/` (12 characters of each), else under `~/.local/state/tensorless/prepared/`. The prepare step writes here; it is emptied before each serve, and safe to delete. |
 | Engine images | The container runtime's own image storage. |
 | Containers | `tensorless-<repo id>`: lowercased, with every character other than `a`–`z`, `0`–`9`, `_`, `.` and `-` replaced by `-`. Started with `--rm`, so a stopped container is removed. |
-| Model inside the container | `/models/<file name>`, mounted read-only. |
+| Model inside the container | `/models/<file name>`, mounted read-only. For a pack: the repository's cache folder at `/models/repo`, read-only, so the pack is `/models/repo/snapshots/<revision>`; and the prepared files at `/models/prepared`, writable for the prepare step and read-only for the server. |
 | Recipes | Built into the binary. `--recipes DIR` reads `DIR/<org>/<repo>/<card>.toml` instead. |
 | The launcher | Wherever you put it. The install script puts it in `$HOME/.local/bin/tensorless` unless `TENSORLESS_INSTALL_DIR` says otherwise. |
 
@@ -43,7 +44,7 @@ A marker counts only while the file's size, modification time and path are the s
 | `HF_HOME` | not set | When `HF_HUB_CACHE` is not set, the cache is `$HF_HOME/hub`. |
 | `HF_ENDPOINT` | `https://huggingface.co` | The Hugging Face Hub address model files are downloaded from: `<endpoint>/<org>/<repo>/resolve/<revision>/<file>`. |
 | `HF_TOKEN` | not set | Sent as `Authorization: Bearer` with downloads, for private or gated repositories. It is never printed; `--dry-run` shows only that it is sent. |
-| `XDG_STATE_HOME` | `~/.local/state` | The base of the state directory, `$XDG_STATE_HOME/tensorless`, which holds the verification markers. |
+| `XDG_STATE_HOME` | `~/.local/state` | The base of the state directory, `$XDG_STATE_HOME/tensorless`, which holds the verification markers and a pack's prepared files. |
 
 The launcher sets `OMP_NUM_THREADS` and the recipe's `GGML_CUDA_*` [engine switches](engine-switches.md) inside the container. It does not pass its own environment into the container.
 
