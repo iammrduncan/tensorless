@@ -14,6 +14,8 @@ A receipt is what the release gate measured for a recipe: speed at stated contex
 | `iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` on `p100` | [Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF-p100.md](https://github.com/iammrduncan/tensorless/blob/main/docs/receipts/engine-v0.3.0/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF-p100.md) |
 | `unsloth/North-Mini-Code-1.0-GGUF` on `p100` | [North-Mini-Code-1.0-GGUF-p100.md](https://github.com/iammrduncan/tensorless/blob/main/docs/receipts/engine-v0.3.0/North-Mini-Code-1.0-GGUF-p100.md) |
 
+A draft for the next release, `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB` on `p100`, has a receipt draft in [`docs/receipts/engine-v0.4.0/`](https://github.com/iammrduncan/tensorless/tree/main/docs/receipts/engine-v0.4.0): the research build's numbers only, since no published image has been measured for it yet. See [Launch targets](launch-targets.md#draft-for-engine-v040-inkling-2-mini).
+
 ## Two kinds of measurement
 
 | Kind | Who measured | On what | How |

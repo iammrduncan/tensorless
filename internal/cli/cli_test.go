@@ -445,7 +445,7 @@ func TestRunDryRunOnEmbeddedRecipes(t *testing.T) {
 				filepath.Join("models--"+strings.ReplaceAll(r.Repo(), "/", "--"), "blobs", f.SHA256)+"\n")
 		}
 		if r.IsPack() {
-			wants = append(wants, "link each file into "+filepath.Join("snapshots", r.Model.Revision)+", as <name> -> ../../blobs/<sha256>",
+			wants = append(wants, "link each file into "+filepath.Join(ta.env["HF_HUB_CACHE"], "models--"+strings.ReplaceAll(r.Repo(), "/", "--"), "snapshots", r.Model.Revision)+", as <name> -> ../../blobs/<sha256>",
 				"podman run --rm --network none --security-opt label=disable -v ",
 				"--entrypoint "+r.Model.Pack.Prepare[0]+" "+r.Engine.Image+" ",
 				" /models/repo/snapshots/"+r.Model.Revision+" /models/prepared\n",

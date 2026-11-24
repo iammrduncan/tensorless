@@ -131,3 +131,33 @@ All three recipes run the same image with the same 21 [engine switches](engine-s
 The model and its 65,536-token context take most of the card's 16 GB: the published image used 14,139 MiB idle and 15,381 MiB after its first prompt with Qwen3.8-27B-PN3, and 13,289 / 13,869 MiB with Q3Floor.
 
 North-Mini-Code-1.0's recipe differs in four places: a context of 36,864 tokens, a q8_0 KV cache (`-ctk q8_0 -ctv q8_0`), and no `-ot token_embd.weight=CUDA0` or `-sm none`. Those are the settings its hill climb's judge ran. The published image used 13,877 MiB idle and 14,409 MiB from its first prompt on, 32K prompts included.
+
+## Draft for engine-v0.4.0: Inkling-2-Mini
+
+Not a launch target yet. Its recipe is a draft with a placeholder image digest, so `pull`, `run` and `serve` refuse it, even with `--allow-draft`, until the `0.4.0-sm60` image is built, pinned in the recipe and measured on a P100. `tensorless info inkling2-mini` and `--dry-run` show it.
+
+Thinking Machines' Inkling-2-Mini (architecture `inkling2_loop`: 24 layers, 8 of 128 experts per token, a core of middle layers that runs three times), in LookAtMyQuant's 12.8 GB pack, unmodified. The pack is not one GGUF file: it is 63 files that the engine reads in place, after a prepare step writes a small GGUF that names the pack's arrays. See [Recipe file](recipes.md#modelpack).
+
+| Field | Value |
+|---|---|
+| Repository | [`shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB`](https://huggingface.co/shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB) |
+| Short name | `inkling2-mini` |
+| Revision | `758a177fdaba30e53cce1266504b5428290aa0c9` |
+| Files | 63, each pinned by name, sha256 and size in the recipe |
+| Size | 12,760,459,456 bytes in all (12.76 GB, 11.9 GiB) |
+| Prepare step | `python3 -E -s /opt/tensorless/inkling-prepare/prepare.py`, in the engine image, before each serve |
+| License | Apache-2.0 (from thinkingmachines/Inkling-2-Mini and shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB) |
+| Card | `p100`: compute capability 6.0, at least 16,000 MiB, driver 525.60.13 or newer |
+| Engine release | `engine-v0.4.0`, `sm60` |
+| Image | a placeholder until `0.4.0-rc1-sm60` is built |
+| Context | 32,768 tokens, f16 KV cache |
+| Recipe | [`recipes/shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB/p100.toml`](https://github.com/iammrduncan/tensorless/blob/main/recipes/shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB/p100.toml) |
+
+| Measure | Value | Scope |
+|---|---:|---|
+| Decode after a 512-token prompt | 28.52 tok/s | research build, the goal campaign's judge: median of 3 greedy replies of 128 tokens |
+| Decode after a 32,000-token prompt | 25.45 tok/s | the same, median of 2 |
+| Prefill, 4,096 tokens | 239.89 tok/s | the same, a cold prompt |
+| Peak card memory | 14,151 MiB | the same, at a 32,768-token context |
+
+Its arguments are `-np 1 -ngl 99 -ctk f16 -ctv f16 -lm none -fit off --threads-http 4 -b 512 -ub 512 -fa auto --jinja`, with the same 21 engine switches as the other recipes: what the campaign's judge ran, apart from `--jinja`.
