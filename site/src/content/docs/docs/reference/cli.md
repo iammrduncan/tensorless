@@ -278,7 +278,7 @@ Describes the launcher. It runs no external command and needs no GPU, driver, ru
 tensorless version
 ```
 
-Prints the version, the commit and the platform, for example `tensorless 0.3.0 (commit 011abeee0b9277141d5100d145ce479c151d37be), linux/amd64`. `tensorless --version` does the same. It takes no flags.
+Prints the version, the commit and the platform, for example `tensorless 0.4.0 (commit 675a12b6507821531fc532aac7ac16c13fe57e40), linux/amd64`. `tensorless --version` does the same. It takes no flags.
 
 ## help
 
