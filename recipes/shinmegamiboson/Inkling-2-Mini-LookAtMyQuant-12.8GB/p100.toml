@@ -1,6 +1,6 @@
 # Inkling-2-Mini on one Tesla P100 16 GB, from LookAtMyQuant's 12.8 GB pack.
 # shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB @ 758a177fdaba30e53cce1266504b5428290aa0c9, unmodified:
-# Thinking Machines' Inkling-2-Mini (inkling2_loop: 26.4B parameters, 5.4B active, a mixture of experts whose middle
+# Thinking Machines' Inkling-2-Mini (inkling2_loop: 26.4B parameters, 3.4B active, about 5.4B with the loop, a mixture of experts whose middle
 # layers run three times), compressed by LookAtMyQuant into 63 files, 12,760,459,456 bytes (inkling2-packed-v1).
 # The engine reads the pack in place: nothing is converted or repacked. Before each serve, the prepare step writes a
 # small GGUF that names the pack's arrays, and llama-server is given that GGUF.

@@ -6,7 +6,7 @@ What has been measured for `recipes/shinmegamiboson/Inkling-2-Mini-LookAtMyQuant
 
 ## The model and its settings
 
-Thinking Machines' Inkling-2-Mini is a mixture-of-experts model (architecture `inkling2_loop`): 24 layers, 128 experts of which 8 run for each token, and a core of middle layers that runs three times. Its model card gives 26.4B parameters, 5.4B of them active. The recipe runs LookAtMyQuant's 12.8 GB pack of it, unmodified:
+Thinking Machines' Inkling-2-Mini is a mixture-of-experts model (architecture `inkling2_loop`): 24 layers, 128 experts of which 8 run for each token, and a core of middle layers that runs three times. Its model card gives 26.4B parameters, 3.4B of them active for a token, about 5.4B counting the loop's extra passes. The recipe runs LookAtMyQuant's 12.8 GB pack of it, unmodified:
 - repository `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB`, revision `758a177f`;
 - 63 files, 12,760,459,456 bytes in all, each pinned in the recipe by name, sha256 and size;
 - the format `inkling2-packed-v1`: the weight matrices in LookAtMyQuant's trellis codes and NVFP4, one `.npz` file per layer, plus the embedding, the output head, lookup tables and steering tensors;
