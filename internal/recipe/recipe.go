@@ -1,6 +1,8 @@
 // Package recipe reads and checks tensorless recipes: one model on one card,
 // recipes/<org>/<repo>/<card>.toml, schema 1 (see recipes/README.md). A model
-// is named by its Hugging Face repo id.
+// is named by its Hugging Face repo id. Its weights are either one file
+// (model.file) or a pack: several files of the repository that the engine
+// reads in place, after a prepare step ([model.pack]).
 package recipe
 
 import (
@@ -36,16 +38,35 @@ type Recipe struct {
 	Source string `toml:"-" json:"source"`
 }
 
-// Model is the [model] table.
+// Model is the [model] table. It names one file (File, SHA256, SizeBytes) or
+// a pack (Pack), never both.
 type Model struct {
 	Name      string `toml:"name" json:"name"`
 	Title     string `toml:"title" json:"title"`
 	HFRepo    string `toml:"hf_repo" json:"hf_repo"`
 	Revision  string `toml:"revision" json:"revision"`
-	File      string `toml:"file" json:"file"`
-	SHA256    string `toml:"sha256" json:"sha256"`
+	File      string `toml:"file" json:"file,omitempty"`
+	SHA256    string `toml:"sha256" json:"sha256,omitempty"`
 	SizeBytes int64  `toml:"size_bytes" json:"size_bytes"`
 	License   string `toml:"license" json:"license"`
+	Pack      *Pack  `toml:"pack" json:"pack,omitempty"`
+}
+
+// Pack is the [model.pack] table: files of the repository, at the model's
+// revision, that the engine reads in place, and the command that prepares
+// them. The launcher runs Prepare in the engine image with two more
+// arguments, the pack's folder and an empty output folder; the last line it
+// prints is the file llama-server is given as -m.
+type Pack struct {
+	Prepare []string   `toml:"prepare" json:"prepare"`
+	Files   []PackFile `toml:"files" json:"files"`
+}
+
+// PackFile is one file of a pack.
+type PackFile struct {
+	Name      string `toml:"name" json:"name"`
+	SHA256    string `toml:"sha256" json:"sha256"`
+	SizeBytes int64  `toml:"size_bytes" json:"size_bytes"`
 }
 
 // Card is the [card] table.
@@ -132,6 +153,17 @@ func Parse(data []byte, source string) (*Recipe, error) {
 		}
 		return nil, fmt.Errorf("%s: unknown keys: %s", source, strings.Join(keys, ", "))
 	}
+	if r.Model.Pack != nil {
+		var both []string
+		for _, k := range []string{"file", "sha256", "size_bytes"} {
+			if md.IsDefined("model", k) {
+				both = append(both, "model."+k)
+			}
+		}
+		if len(both) > 0 {
+			return nil, fmt.Errorf("%s: %s and [model.pack] cannot both be set: a recipe names one file or a pack", source, strings.Join(both, ", "))
+		}
+	}
 	r.Source = source
 	if err := r.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", source, err)
@@ -162,14 +194,21 @@ func (r *Recipe) Validate() error {
 	if !reRevision.MatchString(m.Revision) {
 		bad("model.revision must be a commit: 40 lowercase hex characters, not %q", m.Revision)
 	}
-	if err := checkFile(m.File); err != "" {
-		bad("model.file %q %s", m.File, err)
-	}
-	if !reSHA256.MatchString(m.SHA256) {
-		bad("model.sha256 must be 64 lowercase hex characters, not %q", m.SHA256)
-	}
-	if m.SizeBytes < 0 {
-		bad("model.size_bytes must not be negative")
+	if m.Pack == nil {
+		if err := checkFile(m.File); err != "" {
+			bad("model.file %q %s", m.File, err)
+		}
+		if !reSHA256.MatchString(m.SHA256) {
+			bad("model.sha256 must be 64 lowercase hex characters, not %q", m.SHA256)
+		}
+		if m.SizeBytes < 0 {
+			bad("model.size_bytes must not be negative")
+		}
+	} else {
+		if m.File != "" || m.SHA256 != "" || m.SizeBytes != 0 {
+			bad("model.file, model.sha256 and model.size_bytes must be left out when [model.pack] names the files")
+		}
+		m.Pack.validate(bad)
 	}
 	if strings.TrimSpace(m.License) == "" {
 		bad("model.license is required")
@@ -241,6 +280,61 @@ func (r *Recipe) Validate() error {
 	return fmt.Errorf("invalid recipe:\n  - %s", strings.Join(p, "\n  - "))
 }
 
+// MaxPackFiles is the most files a pack may name.
+const MaxPackFiles = 4096
+
+func (pk *Pack) validate(bad func(string, ...any)) {
+	if len(pk.Prepare) == 0 {
+		bad("model.pack.prepare is required: the command, run in the engine image, that prepares the pack")
+	}
+	for i, a := range pk.Prepare {
+		switch {
+		case a == "":
+			bad("model.pack.prepare[%d] must not be empty", i)
+		case strings.ContainsAny(a, "\x00\n\r"):
+			bad("model.pack.prepare[%d] must not contain newlines or NUL", i)
+		}
+	}
+	switch {
+	case len(pk.Files) == 0:
+		bad("model.pack.files must name at least one file")
+	case len(pk.Files) > MaxPackFiles:
+		bad("model.pack.files names %d files; at most %d are allowed", len(pk.Files), MaxPackFiles)
+	}
+	seen := map[string]string{} // lowercased name -> name
+	for i, f := range pk.Files {
+		if err := checkFile(f.Name); err != "" {
+			bad("model.pack.files[%d].name %q %s", i, f.Name, err)
+		} else if other, ok := seen[strings.ToLower(f.Name)]; ok {
+			if other == f.Name {
+				bad("model.pack.files names %q twice", f.Name)
+			} else {
+				bad("model.pack.files names %q and %q, which differ only in case", other, f.Name)
+			}
+		} else {
+			seen[strings.ToLower(f.Name)] = f.Name
+		}
+		if !reSHA256.MatchString(f.SHA256) {
+			bad("model.pack.files[%d].sha256 (%s) must be 64 lowercase hex characters, not %q", i, f.Name, f.SHA256)
+		}
+		if f.SizeBytes < 0 {
+			bad("model.pack.files[%d].size_bytes (%s) must not be negative", i, f.Name)
+		}
+	}
+	// A name cannot be both a file and a folder of other files. Only clean,
+	// relative names reach this loop, so path.Dir ends at ".".
+	for _, f := range pk.Files {
+		if checkFile(f.Name) != "" {
+			continue
+		}
+		for dir := path.Dir(f.Name); dir != "."; dir = path.Dir(dir) {
+			if other, ok := seen[strings.ToLower(dir)]; ok {
+				bad("model.pack.files names %q, but %q is inside it", other, f.Name)
+			}
+		}
+	}
+}
+
 func checkFile(f string) string {
 	switch {
 	case f == "":
@@ -256,23 +350,50 @@ func checkFile(f string) string {
 }
 
 // Unpublished lists the fields that still hold a placeholder: an all-zero
-// revision, sha256 or image digest, or a size_bytes of 0. A recipe with any
-// of them cannot be pulled or run.
+// revision, sha256 or image digest, or a size_bytes of 0. In a pack, one
+// file's placeholder is enough. A recipe with any of them cannot be pulled or
+// run.
 func (r *Recipe) Unpublished() []string {
+	var zeroSHA, zeroSize bool
+	for _, f := range r.Files() {
+		zeroSHA = zeroSHA || allZero(f.SHA256)
+		zeroSize = zeroSize || f.SizeBytes == 0
+	}
 	var out []string
 	if allZero(r.Model.Revision) {
 		out = append(out, "revision")
 	}
-	if allZero(r.Model.SHA256) {
+	if zeroSHA {
 		out = append(out, "sha256")
 	}
 	if allZero(r.ImageDigest()) {
 		out = append(out, "image digest")
 	}
-	if r.Model.SizeBytes == 0 {
+	if zeroSize {
 		out = append(out, "size_bytes")
 	}
 	return out
+}
+
+// IsPack reports whether the model is a pack rather than one file.
+func (r *Recipe) IsPack() bool { return r.Model.Pack != nil }
+
+// Files returns the model's files: the pack's, or the one file as a
+// one-element list.
+func (r *Recipe) Files() []PackFile {
+	if r.Model.Pack != nil {
+		return r.Model.Pack.Files
+	}
+	return []PackFile{{Name: r.Model.File, SHA256: r.Model.SHA256, SizeBytes: r.Model.SizeBytes}}
+}
+
+// TotalBytes is the sum of the model's file sizes.
+func (r *Recipe) TotalBytes() int64 {
+	var n int64
+	for _, f := range r.Files() {
+		n += f.SizeBytes
+	}
+	return n
 }
 
 // Published reports whether every pinned value is real.

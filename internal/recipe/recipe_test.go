@@ -112,6 +112,126 @@ func TestParseInvalid(t *testing.T) {
 	}
 }
 
+// goodPack is good with its one file replaced by a pack of three.
+var goodPack = strings.Replace(good, `file       = "dir/m1.gguf"
+sha256     = "1111111111111111111111111111111111111111111111111111111111111111"
+size_bytes = 1234
+license    = "apache-2.0"
+`, `license    = "apache-2.0"
+
+[model.pack]
+prepare = ["python3", "-E", "-s", "/opt/tensorless/x/prepare.py"]
+files = [
+  { name = "config.json", sha256 = "3333333333333333333333333333333333333333333333333333333333333333", size_bytes = 10 },
+  { name = "layer_00.npz", sha256 = "4444444444444444444444444444444444444444444444444444444444444444", size_bytes = 2000 },
+  { name = "sub/.hidden", sha256 = "5555555555555555555555555555555555555555555555555555555555555555", size_bytes = 3 },
+]
+`, 1)
+
+func TestParsePack(t *testing.T) {
+	if goodPack == good {
+		t.Fatal("goodPack did not change the recipe")
+	}
+	r, err := Parse([]byte(goodPack), "pack.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.IsPack() || r.Model.File != "" || r.Model.SHA256 != "" || r.Model.SizeBytes != 0 {
+		t.Errorf("model = %+v", r.Model)
+	}
+	if got := r.Model.Pack.Prepare; !reflect.DeepEqual(got, []string{"python3", "-E", "-s", "/opt/tensorless/x/prepare.py"}) {
+		t.Errorf("prepare = %q", got)
+	}
+	files := r.Files()
+	if len(files) != 3 || files[1] != (PackFile{Name: "layer_00.npz", SHA256: strings.Repeat("4", 64), SizeBytes: 2000}) {
+		t.Errorf("files = %+v", files)
+	}
+	if r.TotalBytes() != 2013 || !r.Published() {
+		t.Errorf("total %d, published %v (%v)", r.TotalBytes(), r.Published(), r.Unpublished())
+	}
+
+	one, err := Parse([]byte(good), "good.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.IsPack() || !reflect.DeepEqual(one.Files(), []PackFile{{Name: "dir/m1.gguf", SHA256: strings.Repeat("1", 64), SizeBytes: 1234}}) || one.TotalBytes() != 1234 {
+		t.Errorf("one file: pack %v, files %+v", one.IsPack(), one.Files())
+	}
+}
+
+func TestParsePackInvalid(t *testing.T) {
+	start := strings.Index(goodPack, "files = [")
+	filesArray := goodPack[start : start+strings.Index(goodPack[start:], "\n]\n")+3]
+	if strings.Contains(filesArray, "[card]") || !strings.HasSuffix(filesArray, "]\n") {
+		t.Fatalf("filesArray = %q", filesArray)
+	}
+	const cfg = `{ name = "config.json", sha256 = "3333333333333333333333333333333333333333333333333333333333333333", size_bytes = 10 }`
+	tests := []struct {
+		name, old, new, want string
+	}{
+		{"file and pack", `license    = "apache-2.0"`, "file = \"m.gguf\"\nlicense = \"apache-2.0\"", "model.file and [model.pack] cannot both be set"},
+		{"sha256 and pack", `license    = "apache-2.0"`, "sha256 = \"" + strings.Repeat("1", 64) + "\"\nlicense = \"apache-2.0\"", "model.sha256 and [model.pack]"},
+		{"size 0 and pack", `license    = "apache-2.0"`, "size_bytes = 0\nlicense = \"apache-2.0\"", "model.size_bytes and [model.pack]"},
+		{"no prepare", `prepare = ["python3", "-E", "-s", "/opt/tensorless/x/prepare.py"]`, ``, "model.pack.prepare is required"},
+		{"empty prepare", `prepare = ["python3", "-E", "-s", "/opt/tensorless/x/prepare.py"]`, `prepare = []`, "model.pack.prepare is required"},
+		{"empty prepare arg", `"-E", "-s"`, `"-E", ""`, "model.pack.prepare[2] must not be empty"},
+		{"newline in prepare", `"-E", "-s"`, `"-E", "-s\nx"`, "model.pack.prepare[2] must not contain newlines"},
+		{"no files", filesArray, "files = []\n", "model.pack.files must name at least one file"},
+		{"duplicate", cfg, cfg + ",\n  " + cfg, `names "config.json" twice`},
+		{"case", cfg, cfg + ",\n  " + strings.Replace(cfg, "config.json", "Config.JSON", 1), `"config.json" and "Config.JSON", which differ only in case`},
+		{"dotdot", `name = "config.json"`, `name = "../config.json"`, `model.pack.files[0].name "../config.json" must be a clean path`},
+		{"inner dotdot", `name = "config.json"`, `name = "a/../config.json"`, "must be a clean path"},
+		{"absolute", `name = "config.json"`, `name = "/etc/passwd"`, "must be a relative path"},
+		{"backslash", `name = "config.json"`, `name = "a\\config.json"`, "must be a relative path"},
+		{"dot", `name = "config.json"`, `name = "."`, "must be a clean path"},
+		{"empty name", `name = "config.json"`, `name = ""`, "is required"},
+		{"colon", `name = "config.json"`, `name = "c:onfig.json"`, "must not contain ':'"},
+		{"file is a folder", `name = "config.json"`, `name = "sub"`, `names "sub", but "sub/.hidden" is inside it`},
+		{"short sha", `sha256 = "3333333333333333333333333333333333333333333333333333333333333333"`, `sha256 = "3333"`, "model.pack.files[0].sha256 (config.json)"},
+		{"upper sha", `sha256 = "3333333333333333333333333333333333333333333333333333333333333333"`, `sha256 = "` + strings.Repeat("A", 64) + `"`, "model.pack.files[0].sha256"},
+		{"negative size", `size_bytes = 10 }`, `size_bytes = -1 }`, "model.pack.files[0].size_bytes (config.json) must not be negative"},
+		{"unknown pack key", `prepare = [`, `entrypoint = "x"` + "\n" + `prepare = [`, "unknown keys: model.pack.entrypoint"},
+		{"unknown file key", `size_bytes = 10 }`, `size_bytes = 10, path = "x" }`, "unknown keys: model.pack.files.path"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			src := strings.Replace(goodPack, tc.old, tc.new, 1)
+			if src == goodPack {
+				t.Fatalf("test did not change the recipe")
+			}
+			_, err := Parse([]byte(src), "bad.toml")
+			if err == nil {
+				t.Fatalf("expected an error containing %q", tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), "bad.toml") {
+				t.Errorf("error %q does not contain %q and the source", err, tc.want)
+			}
+		})
+	}
+
+	// Validate holds the same rules for a recipe built in code.
+	r, err := Parse([]byte(goodPack), "pack.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Model.File = "m.gguf"
+	if err := r.Validate(); err == nil || !strings.Contains(err.Error(), "must be left out when [model.pack] names the files") {
+		t.Errorf("Validate = %v", err)
+	}
+}
+
+func TestPackPlaceholders(t *testing.T) {
+	r, err := Parse([]byte(goodPack), "pack.toml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Model.Pack.Files[1].SHA256 = strings.Repeat("0", 64)
+	r.Model.Pack.Files[2].SizeBytes = 0
+	if got := r.Unpublished(); !reflect.DeepEqual(got, []string{"sha256", "size_bytes"}) {
+		t.Errorf("Unpublished() = %v", got)
+	}
+}
+
 func TestUnpublishedFixtures(t *testing.T) {
 	s, err := Load(os.DirFS("testdata/placeholders"), "testdata")
 	if err != nil {
@@ -150,17 +270,26 @@ func embedded(t *testing.T) *Set {
 // placeholders lists the placeholder fields of r, worked out from its values
 // rather than by Unpublished.
 func placeholders(r *Recipe) []string {
+	files := []PackFile{{SHA256: r.Model.SHA256, SizeBytes: r.Model.SizeBytes}}
+	if r.Model.Pack != nil {
+		files = r.Model.Pack.Files
+	}
+	var zeroSHA, zeroSize bool
+	for _, f := range files {
+		zeroSHA = zeroSHA || f.SHA256 == strings.Repeat("0", 64)
+		zeroSize = zeroSize || f.SizeBytes == 0
+	}
 	var out []string
 	if r.Model.Revision == strings.Repeat("0", 40) {
 		out = append(out, "revision")
 	}
-	if r.Model.SHA256 == strings.Repeat("0", 64) {
+	if zeroSHA {
 		out = append(out, "sha256")
 	}
 	if strings.HasSuffix(r.Engine.Image, "@sha256:"+strings.Repeat("0", 64)) {
 		out = append(out, "image digest")
 	}
-	if r.Model.SizeBytes == 0 {
+	if zeroSize {
 		out = append(out, "size_bytes")
 	}
 	return out
