@@ -32,12 +32,12 @@ Copy a command and run it. Each one is a recipe: the engine image, model file an
 
 | Command | Card | Decode | Prefill | Decode at 32K |
 |---|---|---:|---:|---:|
-| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | Tesla P100 16 GB | 30.4 | 200 | – |
-| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | Tesla P100 16 GB | 26.5 | – | 24.5 |
-| `tensorless run unsloth/North-Mini-Code-1.0-GGUF` | Tesla P100 16 GB | 79.8 | 446 | 66.1 |
-| `tensorless run shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB --allow-draft` (draft) | Tesla P100 16 GB | 28.5 | 240 | 25.5 |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | 1× Tesla P100 16 GB | 30.4 | 200 | – |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | 1× Tesla P100 16 GB | 26.5 | – | 24.5 |
+| `tensorless run unsloth/North-Mini-Code-1.0-GGUF` | 1× Tesla P100 16 GB | 79.8 | 446 | 66.1 |
+| `tensorless run shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB --allow-draft` (draft) | 1× Tesla P100 16 GB | 28.5 | 240 | 25.5 |
 
-Tokens a second on one card, greedy, from each recipe's `[receipt]`. Decode is measured after a short prompt (North-Mini-Code-1.0: 4,096 tokens), prefill on a cold prompt of about 4,000 tokens, and decode at 32K after a 32K prompt. – means not measured yet. A draft has not yet passed the release gate on its published image. The measurements in full, and the published image's own, are in [docs/receipts/](docs/receipts/) and on [Launch targets](https://tensorless.dev/docs/reference/launch-targets/). `tensorless models` lists the recipes your launcher knows.
+Card is how many cards and which: every launch target today runs on one. Tokens a second, greedy, from each recipe's `[receipt]`. Decode is measured after a short prompt (North-Mini-Code-1.0: 4,096 tokens), prefill on a cold prompt of about 4,000 tokens, and decode at 32K after a 32K prompt. – means not measured yet. A draft has not yet passed the release gate on its published image. The measurements in full, and the published image's own, are in [docs/receipts/](docs/receipts/) and on [Launch targets](https://tensorless.dev/docs/reference/launch-targets/). `tensorless models` lists the recipes your launcher knows.
 
 ## Quick start (Linux, Tesla P100)
 

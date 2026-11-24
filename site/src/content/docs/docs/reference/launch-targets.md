@@ -10,12 +10,12 @@ A launch target is one recipe: one model on one card, released after its image w
 
 | Command | Short name | Card | Decode | Prefill | Decode at 32K |
 |---|---|---|---:|---:|---:|
-| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | `pn3` | Tesla P100 16 GB | 30.4 | 200 | – |
-| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | `q3floor` | Tesla P100 16 GB | 26.5 | – | 24.5 |
-| `tensorless run unsloth/North-Mini-Code-1.0-GGUF` | `nmc` | Tesla P100 16 GB | 79.8 | 446 | 66.1 |
-| `tensorless run shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB --allow-draft` (draft) | `inkling2-mini` | Tesla P100 16 GB | 28.5 | 240 | 25.5 |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | `pn3` | 1× Tesla P100 16 GB | 30.4 | 200 | – |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | `q3floor` | 1× Tesla P100 16 GB | 26.5 | – | 24.5 |
+| `tensorless run unsloth/North-Mini-Code-1.0-GGUF` | `nmc` | 1× Tesla P100 16 GB | 79.8 | 446 | 66.1 |
+| `tensorless run shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB --allow-draft` (draft) | `inkling2-mini` | 1× Tesla P100 16 GB | 28.5 | 240 | 25.5 |
 
-Tokens a second on one card, greedy. These are the numbers in each recipe's `[receipt]`:
+Card is how many cards and which: every launch target today runs on one. Tokens a second, greedy. These are the numbers in each recipe's `[receipt]`:
 - decode after a short prompt (North-Mini-Code-1.0: 4,096 tokens);
 - prefill on a cold prompt of about 4,000 tokens;
 - decode after a 32K prompt.

@@ -13,7 +13,9 @@ const rows = recipes.map((r) => {
     cmd,
     draft,
     repo: r.model.hf_repo,
-    card: r.card.title.replace(/^NVIDIA /, ""),
+    // How many cards, and which. Every recipe runs on one card today (the launcher picks one GPU); a
+    // multi-card recipe will name its count in [card] when the launcher can run one.
+    card: `1× ${r.card.title.replace(/^NVIDIA /, "")}`,
     decode: tps(r.receipt?.decode_tps?.short),
     prefill: tps(r.receipt?.prefill_tps?.ctx_4k),
     long: tps(r.receipt?.decode_tps?.ctx_32k),
@@ -63,7 +65,7 @@ const words = ["No", "One", "Two", "Three", "Four", "Five", "Six"];
       </table>
     </div>
     <p class="note small" data-reveal>
-      Tokens a second on one card, greedy, from each recipe's receipt: decode after a short prompt (North-Mini-Code-1.0: 4,096
+      Card is how many cards and which. Tokens a second, greedy, from each recipe's receipt: decode after a short prompt (North-Mini-Code-1.0: 4,096
       tokens), prefill on a cold prompt of about 4,000 tokens, decode after a 32K prompt. – is not measured yet. A draft has not
       passed the release gate on its published image. <a href="/docs/reference/launch-targets/">Every target in full</a>
     </p>
@@ -82,7 +84,7 @@ const words = ["No", "One", "Two", "Three", "Four", "Five", "Six"];
     font-size: 0.86rem;
   }
   th.card {
-    width: 9rem;
+    width: 10.5rem;
   }
   th.num {
     width: 5rem;
