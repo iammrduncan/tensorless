@@ -1,6 +1,6 @@
 ---
 title: "Engine image"
-description: "The tensorless engine container image: its tags and digest, base images, contents, entrypoint, build configuration and host requirements."
+description: "The tensorless engine container image: its tags and digest, base images, contents, entrypoint, prepare steps, build configuration and host requirements."
 type: reference
 sidebar:
   order: 4
@@ -50,6 +50,7 @@ The source of an engine release is tagged `engine-vX.Y.Z` in the repository. The
 |---|---|
 | `/opt/tensorless/bin/llama-server` | The server. |
 | `/opt/tensorless/bin/*.so` | Its shared libraries, built with it. |
+| `/opt/tensorless/inkling-prepare/prepare.py` | The prepare step of a model that is a pack of files: LookAtMyQuant's Inkling-2-Mini packs. It is the engine's [`tools/inkling-prepare/`](https://github.com/iammrduncan/tensorless/tree/main/engine/tools/inkling-prepare), and needs only python3 and numpy. From engine-v0.4.0. |
 | `/opt/tensorless/LICENSE` | Apache-2.0. |
 | `/opt/tensorless/NOTICE`, `/opt/tensorless/THIRD_PARTY_NOTICES.md` | Attribution, including the MIT-licensed upstreams. |
 | `/opt/tensorless/LICENSES/` | The upstream license texts, the engine's `LICENSE` (as `engine-LICENSE.txt`) and the licenses of code vendored into the engine (`LICENSES/engine/`). |
@@ -57,7 +58,7 @@ The source of an engine release is tagged `engine-vX.Y.Z` in the repository. The
 | `/opt/tensorless/VERSION` | The version label the image was built with. For `0.3.0-sm60` it is the candidate's label, `0.3.0-rc1`, because the release is the candidate's digest. |
 | `/opt/tensorless/SHA256SUMS` | The sha256 of every other file under `/opt/tensorless`. |
 
-The image holds no model weights and no build tree.
+The image holds no model weights and no build tree. Since engine-v0.4.0 it also holds python3 and numpy, from Ubuntu's packages, for the prepare steps.
 
 | Setting | Value |
 |---|---|
@@ -69,6 +70,14 @@ The image holds no model weights and no build tree.
 
 Arguments after the image name go to `llama-server`. The launcher passes the model path, `--host 0.0.0.0 --port 8080`, the context, the alias, the thread counts and the recipe's arguments; see [Command line](cli.md#serve).
 
+For a recipe with a pack, the launcher first runs the recipe's prepare step in the same image, with the entrypoint replaced (`--entrypoint python3`), no GPU and no network. For Inkling-2-Mini:
+
+```text
+python3 -E -s /opt/tensorless/inkling-prepare/prepare.py /models/repo/snapshots/<revision> /models/prepared
+```
+
+It reads the pack's configuration, tokenizer and file headers, writes `/models/prepared/inkling2.gguf` (about 12 MB: the hyperparameters, the tokenizer and a table of the pack's arrays by file and offset, with the pack's folder), and prints that path last. It takes a few seconds. The server is then started with `-m /models/prepared/inkling2.gguf` and the pack at the same path, and memory-maps the pack's files in place.
+
 ## Build
 
 The image is built from [`containers/engine.sm60.Containerfile`](https://github.com/iammrduncan/tensorless/blob/main/containers/engine.sm60.Containerfile), with the repository root as the build context. It has two stages.
@@ -76,7 +85,7 @@ The image is built from [`containers/engine.sm60.Containerfile`](https://github.
 | Stage | Base image | What happens |
 |---|---|---|
 | Build | `docker.io/nvidia/cuda:12.6.3-devel-ubuntu24.04` | Installs cmake, ninja and git; configures and builds `llama-server` and `test-pn-format`; runs `test-pn-format`, so a PN decoding error fails the build; copies the server and its libraries out. |
-| Runtime | `docker.io/nvidia/cuda:12.6.3-runtime-ubuntu24.04` | Installs `libgomp1`; copies the server, libraries and license files into `/opt/tensorless`; writes `VERSION` and `SHA256SUMS`. |
+| Runtime (`runtime`) | `docker.io/nvidia/cuda:12.6.3-runtime-ubuntu24.04` | Installs `libgomp1`, `python3` and `python3-numpy` (without recommended packages); copies the prepare steps, the server, libraries and license files into `/opt/tensorless`; writes `VERSION` and `SHA256SUMS`. |
 
 | Build argument | Default | Meaning |
 |---|---|---|

@@ -52,6 +52,15 @@ podman run --rm --entrypoint sh tensorless-engine:0.3.0-local-sm60 \
 
 It prints `0.3.0-local` and nothing else. A mismatched file prints `FAILED`.
 
+From engine-v0.4.0, the image also holds the prepare steps for models that are packs of files. Check that their Python finds numpy, with no network, as the launcher runs them:
+
+```sh
+podman run --rm --network none --entrypoint python3 tensorless-engine:0.3.0-local-sm60 \
+  -E -s -c 'import numpy; print(numpy.__version__)'
+```
+
+On the Ubuntu 24.04 base it prints `1.26.4`.
+
 ## 4. Run it
 
 Your image's digest is not the release's. Builds are not byte for byte reproducible: the base images and packages they install change over time, and so do the layers' timestamps. The recipes pin the published digest, so the launcher does not use your build.
