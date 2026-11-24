@@ -14,23 +14,25 @@ Registry: `ghcr.io/iammrduncan/tensorless-engine`. The images are public.
 
 | Tag | Digest | Engine release | Architecture | Meaning |
 |---|---|---|---|---|
-| `0.3.0-sm60` | `sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e` | `engine-v0.3.0` | `sm60` (Tesla P100) | The current release. All three recipes pin it. |
-| `0.3.0-rc1-sm60` | `sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e` | `engine-v0.3.0` | `sm60` | The release candidate the release gate measured. The release tag points at the same digest. |
+| `0.4.0-sm60` | `sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997` | `engine-v0.4.0` | `sm60` (Tesla P100) | The current release. All four recipes pin it: the three launch targets, and the Inkling-2-Mini draft, which has not been measured on it yet. |
+| `0.4.0-rc1-sm60` | `sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997` | `engine-v0.4.0` | `sm60` | The release candidate the release gate measured, built by CI from commit `b4db2870`. The release tag points at the same digest. |
+| `0.3.0-sm60` | `sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e` | `engine-v0.3.0` | `sm60` | The third release. It stays in the registry for the recipes of tensorless v0.3.0. |
+| `0.3.0-rc1-sm60` | `sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e` | `engine-v0.3.0` | `sm60` | Its release candidate, the same digest. |
 | `0.2.0-sm60` | `sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7` | `engine-v0.2.0` | `sm60` | The second release. It stays in the registry for the recipes of tensorless v0.2.0. |
 | `0.2.0-rc1-sm60` | `sha256:b95f77cd01cf0f785ee8cc853fc09454bdf4851f7214e8253c6529759c1eb7a7` | `engine-v0.2.0` | `sm60` | Its release candidate, the same digest. |
 | `0.1.0-sm60` | `sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7` | `engine-v0.1.0` | `sm60` | The first release. It stays in the registry for the recipes of tensorless v0.1.0. |
 | `0.1.0-rc1-sm60` | `sha256:35409ff97c2f518e468790c28bd19206ae777a945fcffe5775585e28fd9939a7` | `engine-v0.1.0` | `sm60` | Its release candidate, the same digest. |
 
 ```text
-ghcr.io/iammrduncan/tensorless-engine@sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e
+ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997
 ```
 
 ## Tags
 
 | Pattern | Example | Made by |
 |---|---|---|
-| `X.Y.Z-rcN-<arch>` | `0.3.0-rc1-sm60` | A release-candidate build ([`engine-image.yml`](https://github.com/iammrduncan/tensorless/blob/main/.github/workflows/engine-image.yml)). |
-| `X.Y.Z-<arch>` | `0.3.0-sm60` | Promotion of a measured candidate's digest, without a rebuild ([`engine-promote.yml`](https://github.com/iammrduncan/tensorless/blob/main/.github/workflows/engine-promote.yml)). The workflow checks that the new tag points at the measured digest. |
+| `X.Y.Z-rcN-<arch>` | `0.4.0-rc1-sm60` | A release-candidate build ([`engine-image.yml`](https://github.com/iammrduncan/tensorless/blob/main/.github/workflows/engine-image.yml)). |
+| `X.Y.Z-<arch>` | `0.4.0-sm60` | Promotion of a measured candidate's digest, without a rebuild ([`engine-promote.yml`](https://github.com/iammrduncan/tensorless/blob/main/.github/workflows/engine-promote.yml)). The workflow checks that the new tag points at the measured digest. |
 
 The source of an engine release is tagged `engine-vX.Y.Z` in the repository. The launcher is versioned separately, `vX.Y.Z`.
 
@@ -55,7 +57,7 @@ The source of an engine release is tagged `engine-vX.Y.Z` in the repository. The
 | `/opt/tensorless/NOTICE`, `/opt/tensorless/THIRD_PARTY_NOTICES.md` | Attribution, including the MIT-licensed upstreams. |
 | `/opt/tensorless/LICENSES/` | The upstream license texts, the engine's `LICENSE` (as `engine-LICENSE.txt`) and the licenses of code vendored into the engine (`LICENSES/engine/`). |
 | `/opt/tensorless/PROVENANCE.md` | Where the engine source came from: the upstream base, the research commit, the tree digest, what the export removed and rewrote, and known issues. |
-| `/opt/tensorless/VERSION` | The version label the image was built with. For `0.3.0-sm60` it is the candidate's label, `0.3.0-rc1`, because the release is the candidate's digest. |
+| `/opt/tensorless/VERSION` | The version label the image was built with. For `0.4.0-sm60` it is the candidate's label, `0.4.0-rc1`, because the release is the candidate's digest. |
 | `/opt/tensorless/SHA256SUMS` | The sha256 of every other file under `/opt/tensorless`. |
 
 The image holds no model weights and no build tree. Since engine-v0.4.0 it also holds python3 and numpy, from Ubuntu's packages, for the prepare steps.

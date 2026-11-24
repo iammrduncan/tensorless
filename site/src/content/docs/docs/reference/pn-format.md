@@ -101,7 +101,7 @@ Qwen3.8-27B-PN3 also applies a Hadamard rotation to the activations that reach t
 
 ## Where PN runs
 
-| Path | State in `engine-v0.3.0` |
+| Path | State in `engine-v0.4.0` |
 |---|---|
 | CUDA, `sm_60` | Correct. PN tensors use their own GEMV kernels (`ggml-cuda/pn-sm60.cu`) and, for a prompt's batches, their own GEMM kernels (`ggml-cuda/pn-gemm-sm60.cu`), with no switch needed. |
 | CPU reference decode (`dequantize_row_pn3t`, `dequantize_row_pn4t`) | Correct. |

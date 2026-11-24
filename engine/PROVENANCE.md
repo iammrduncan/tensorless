@@ -1,13 +1,13 @@
-# Engine provenance: engine-v0.3.0
+# Engine provenance: engine-v0.4.0
 
-This directory is the tensorless engine at release **engine-v0.3.0**: a fork of llama.cpp for the NVIDIA Tesla P100 (sm_60). Its kernels were developed and hill-climbed in automated campaigns; this release adds the decode work of a hill climb on North-Mini-Code-1.0, run on this repository's engine.
+This directory is the tensorless engine at release **engine-v0.4.0**: a fork of llama.cpp for the NVIDIA Tesla P100 (sm_60). Its kernels were developed and hill-climbed in automated campaigns; this release adds Thinking Machines' Inkling-2-Mini, read in place from LookAtMyQuant's packed format, the work of a goal campaign run on this repository's engine.
 
 | Item | Value |
 |---|---|
 | Upstream base | [JakeATX/llamAmpere](https://github.com/JakeATX/llamAmpere) `2cb16936b5d081a92f1d0369954561efb6d1e2c7` (MIT), itself a fork of [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant) and [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) |
-| Hill-climb commit | `7d8be264fcadf1ec7ea9019f466c01e1253d27c0` (engine tree `bfbcbf1cb0f28cf4c4b9d432e07913c1e45ce628`), the champion of the North-Mini-Code decode hill climb |
-| Previous release | engine-v0.2.0 (research commit `df673571ed7238d2fe30d4b8355d7707d6672054`) |
-| Files changed from engine-v0.2.0 | 18, none new: `src/llama-kv-cache-iswa.cpp` (the climb's starting point, below) and 17 from the climb |
+| Goal-campaign commit | `3e343003` (engine tree `28aeb14d`), champion 7 of the Inkling-2-Mini goal campaign |
+| Previous release | engine-v0.3.0 (tensorless commit `011abeee0b9277141d5100d145ce479c151d37be`; its hill-climb commit was `7d8be264fcadf1ec7ea9019f466c01e1253d27c0`) |
+| Files changed from engine-v0.3.0 | 41, 17 of them new, this file included |
 
 ## What this fork adds
 
@@ -26,7 +26,26 @@ The PN kernels are the result of two automated hill climbs, each holding the mod
 - **Decode** (engine-v0.1.0): 131 judged attempts, 28 confirmed improvements, PN3M19 decode on one P100 from 7.74 to about 30 tok/s at short context.
 - **Prefill** (engine-v0.2.0): 369 attempts, 26 promoted improvements, PN3M19 prefill on one P100 from 121.4 to 200.1 tok/s on a cold prompt of about 4,100 tokens, with the decode held within 1% of its starting point.
 
-## New in engine-v0.3.0: North-Mini-Code-1.0 decode
+## New in engine-v0.4.0: Inkling-2-Mini
+
+The result of an automated goal campaign on one P100, which started from engine-v0.3.0: make the engine run Thinking Machines' Inkling-2-Mini (`inkling2_loop`: 24 layers, 8 of 128 experts per token, a core of middle layers run three times) from LookAtMyQuant's 12.8 GB pack (`inkling2-packed-v1`, 63 files), read in place, at a 32K context on the card. Its judge held the output against the pack's own float32 reference; champion 7 met all seven of the campaign's goals and passed the held-out checks.
+
+- **What it adds:** the `inkling2_loop` model, which memory-maps the pack's files in place; the pack's trellis, Lloyd-Max and NVFP4 decoders for the CPU and for sm_60; flash attention with an indexed relative-position bias; a prepare step, `tools/inkling-prepare/prepare.py` (python3 and numpy only), which writes a small GGUF naming the pack's arrays by file and offset; and `tools/inkling-dump`. The new model code takes effect only for `inkling2_loop`, and the indexed bias only when a graph passes one.
+- **Where it comes from:**
+  - `ggml/include/ggml-inkling2.h`, `tools/inkling-dump/check_rows.py`: ports of LookAtMyQuant's
+    `runtime_cuda/inkling/formats.py` and `format_metadata.py` decoders (github.com/ShinMegamiBoson/lookatmyquant, MIT;
+    its notice is the repository's `LICENSES/lookatmyquant-MIT.txt`).
+  - `src/models/inkling2-loop.cpp`: written for this tree after transformers' `modeling_inkling2_loop.py` (Apache-2.0) and
+    the design of upstream llama.cpp's `src/models/inkling2.cpp` / `inkling2-loop.cpp` (MIT): slot numbering, depth mix,
+    message gates, convolutions with recurrent state, the sink folded into the bias table.
+  - `tests/inkling2/reference_logits.py` wraps LookAtMyQuant's `reference.py` with the embedding kept in float32.
+  - `ggml_flash_attn_ext_add_indexed_bias` (`ggml.c`, CPU `ops.cpp`, CUDA TILE kernel): the contract of upstream llama.cpp
+    PR 32740 (MIT), F32 table [n_bins, n_head, T] and I32 index [n_kv, T]; inkling2_loop feeds it its sink-folded relative
+    bias table and the relative-position index, so attention runs as flash attention without a dense KQ bias.
+- **The host sync schedule, for every model** (`ggml-cuda.cu`): `GGML_CUDA_SYNC_SCHED` sets how the host thread waits in a CUDA synchronize: `blocking` (sleep until the GPU signals), `yield`, `spin`, or `auto`, the CUDA driver's default, which engine-v0.3.0 and earlier always used. Its default here is `blocking`. On the release gate's P100, `blocking` read about 1% slower than `auto` for Qwen3.8-27B-PN3, so the three released recipes set `auto`; the Inkling-2-Mini recipe keeps the default, as its research build was measured.
+- **Rebuilt from the run's export:** the 4-patch attempt chain from engine-v0.3.0 to champion 7, checked blob for blob against every patch's index lines. One file of the champion is left out, `tests/inkling2/g3.sh`, a scratch script with a development machine's paths; nothing else differs from the champion's engine tree.
+
+## From engine-v0.3.0: North-Mini-Code-1.0 decode
 
 The result of an automated decode hill climb on CohereLabs' North-Mini-Code-1.0 (cohere2moe: 128 experts, 8 active, a 4,096-token sliding window on 36 of 49 layers) in Unsloth's UD-IQ3_XXS file, on one P100. Its judge measured greedy decode after a cold 4,096- and 32,768-token code prompt, and held every change's teacher-forced output against the starting point's own (mean KL at most 0.003 nat, top-1 agreement at least 98%).
 
@@ -71,15 +90,3 @@ The upstream license is in `LICENSE`; tensorless's own changes are Apache-2.0 (s
 ## Known issue
 
 The CPU backend's PN dot product (`ggml_vec_dot_pn_t_q8_0` in `ggml-cpu/quants.c`) shifts by element index instead of pair index and decodes most PN weights wrong. GPU paths are correct and every tensorless recipe runs the whole model on the GPU; do not run PN models on the CPU backend or with partial offload until it is fixed.
-
-## Inkling-2-Mini (inkling2_loop) from LookAtMyQuant's packed format
-
-- `ggml/include/ggml-inkling2.h`, `tools/inkling-dump/check_rows.py`: ports of LookAtMyQuant's
-  `runtime_cuda/inkling/formats.py` and `format_metadata.py` decoders (github.com/ShinMegamiBoson/lookatmyquant, MIT).
-- `src/models/inkling2-loop.cpp`: written for this tree after transformers' `modeling_inkling2_loop.py` (Apache-2.0) and
-  the design of upstream llama.cpp's `src/models/inkling2.cpp` / `inkling2-loop.cpp` (MIT): slot numbering, depth mix,
-  message gates, convolutions with recurrent state, the sink folded into the bias table.
-- `tests/inkling2/reference_logits.py` wraps LookAtMyQuant's `reference.py` with the embedding kept in float32.
-- `ggml_flash_attn_ext_add_indexed_bias` (`ggml.c`, CPU `ops.cpp`, CUDA TILE kernel): the contract of upstream llama.cpp
-  PR 32740 (MIT), F32 table [n_bins, n_head, T] and I32 index [n_kv, T]; inkling2_loop feeds it its sink-folded relative
-  bias table and the relative-position index, so attention runs as flash attention without a dense KQ bias.

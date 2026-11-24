@@ -43,7 +43,7 @@ iamMrDuncan/Qwen3.8-27B-PN3-GGUF on p100, 3 runs of 256 tokens (median):
 The receipt was measured with a different prompt, so expect a few percent of difference.
 ```
 
-On the P100 that measured the release, the published image gave a median of 30.45 tok/s for this model, with a 429-token prompt: +0.1% against the receipt. Qwen3.8-27B-UD-IQ3_XXS-Q3Floor gave 26.53 tok/s against its receipt of 26.53. North-Mini-Code-1.0 gave 93.70 tok/s with a 411-token prompt, 17.5% above its receipt of 79.77: that receipt was measured after a 4,096-token prompt, and decode is faster after a short one. Compare your North-Mini-Code-1.0 result with 93.70, not with its receipt. The [receipts](../../reference/receipts.md) have the details.
+On the P100 that measured the release, the published image gave a median of 30.46 tok/s for this model, with a 429-token prompt: +0.1% against the receipt. Qwen3.8-27B-UD-IQ3_XXS-Q3Floor gave 26.63 tok/s against its receipt of 26.53. North-Mini-Code-1.0 gave 94.82 tok/s with a 411-token prompt, 18.9% above its receipt of 79.77: that receipt was measured after a 4,096-token prompt, and decode is faster after a short one. Compare your North-Mini-Code-1.0 result with 94.82, not with its receipt. The [receipts](../../reference/receipts.md) have the details.
 
 ## What it measures
 

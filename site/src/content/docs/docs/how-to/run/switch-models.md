@@ -17,10 +17,11 @@ tensorless models
 ```
 
 ```text
-MODEL                                            CARD  STATUS    ENGINE         FITS  CACHED
-iamMrDuncan/Qwen3.8-27B-PN3-GGUF                 p100  released  engine-v0.3.0  yes   yes
-iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF  p100  released  engine-v0.3.0  yes   no
-unsloth/North-Mini-Code-1.0-GGUF                 p100  released  engine-v0.3.0  yes   no
+MODEL                                                CARD  STATUS    ENGINE         FITS  CACHED
+iamMrDuncan/Qwen3.8-27B-PN3-GGUF                     p100  released  engine-v0.4.0  yes   yes
+iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF      p100  released  engine-v0.4.0  yes   no
+shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB  p100  draft     engine-v0.4.0  yes   no
+unsloth/North-Mini-Code-1.0-GGUF                     p100  released  engine-v0.4.0  yes   no
 ```
 
 - **FITS** says whether a GPU on this host matches the recipe (`yes`, `no`, or `unknown` without a GPU).
@@ -46,7 +47,7 @@ Don't start a second model while the first holds the card. On the same port, the
 tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF
 ```
 
-The first time, this downloads the 11.76 GB model file and checks its sha256. The engine image is the same one all three recipes use, so it is not pulled again.
+The first time, this downloads the 11.76 GB model file and checks its sha256. The engine image is the same one every recipe uses, so it is not pulled again.
 
 Each recipe also defines a short name, which works anywhere a repo id does:
 
@@ -55,6 +56,7 @@ Each recipe also defines a short name, which works anywhere a repo id does:
 | `pn3` | `iamMrDuncan/Qwen3.8-27B-PN3-GGUF` |
 | `q3floor` | `iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` |
 | `nmc` | `unsloth/North-Mini-Code-1.0-GGUF` |
+| `inkling2-mini` | `shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB`, a draft: it needs `--allow-draft` |
 
 ```sh
 tensorless stop pn3

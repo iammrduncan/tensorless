@@ -26,8 +26,8 @@ You need:
 ## 1. Pull the engine image by digest
 
 ```sh
-podman pull ghcr.io/iammrduncan/tensorless-engine@sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e
-# or: docker pull ghcr.io/iammrduncan/tensorless-engine@sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e
+podman pull ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997
+# or: docker pull ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997
 ```
 
 Pull by digest, not by tag: the digest is what the receipt measured.
@@ -64,8 +64,8 @@ podman run -d --rm --name tensorless-pn3 \
   -e GGML_CUDA_MMV_SM60_XXS_STOCK=1 -e GGML_CUDA_NORM_EMIT_Q8=1 \
   -e GGML_CUDA_PREFILL_CHUNK_GEMM=1 -e GGML_CUDA_PREFILL_CHUNK_STREAMS=3 \
   -e GGML_CUDA_PREFILL_DEQ_F4=1 -e GGML_CUDA_PREFILL_REP_DIRECT=1 \
-  -e GGML_CUDA_SM86_GDN_COLS=8 -e GGML_CUDA_SM86_IQ3_SMEM_GRID=1 \
-  ghcr.io/iammrduncan/tensorless-engine@sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e \
+  -e GGML_CUDA_SM86_GDN_COLS=8 -e GGML_CUDA_SM86_IQ3_SMEM_GRID=1 -e GGML_CUDA_SYNC_SCHED=auto \
+  ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997 \
   -m /models/Qwen3.8-27B-PN3-P0k19.gguf --host 0.0.0.0 --port 8080 -c 65536 \
   --alias iamMrDuncan/Qwen3.8-27B-PN3-GGUF -t 8 -tb 8 \
   -np 1 -ngl 99 -ot token_embd.weight=CUDA0 -ctk q4_0 -ctv q4_0 -sm none -lm none -fit off \
@@ -78,7 +78,7 @@ What the parts are:
 
 | Part | From the recipe |
 |---|---|
-| `-e GGML_CUDA_...` | `[run.env]`: the 21 [engine switches](../../reference/engine-switches.md), exactly as measured. |
+| `-e GGML_CUDA_...` | `[run.env]`: the 21 [engine switches](../../reference/engine-switches.md) and `GGML_CUDA_SYNC_SCHED=auto`, exactly as measured. |
 | `-c 65536` | `run.context`. |
 | `--alias` | `run.alias`, the served model name. |
 | `-t 8 -tb 8`, `OMP_NUM_THREADS=8` | `run.threads_max`. The launcher uses the smaller of this and your CPU count. |

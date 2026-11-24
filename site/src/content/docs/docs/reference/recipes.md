@@ -44,9 +44,9 @@ min_memory_mib     = 16000
 min_driver         = "525.60.13"
 
 [engine]
-release = "engine-v0.3.0"
+release = "engine-v0.4.0"
 arch    = "sm60"
-image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e"
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997"
 
 [run]
 alias       = "iamMrDuncan/Qwen3.8-27B-PN3-GGUF"
@@ -58,7 +58,7 @@ args = ["-np", "1", "-ngl", "99", "-ot", "token_embd.weight=CUDA0", "-ctk", "q4_
 
 [run.env]
 GGML_CUDA_FATTN_SM60 = "1"
-# ... the other engine switches
+# ... the other engine switches, and GGML_CUDA_SYNC_SCHED = "auto"
 
 [receipt]
 summary     = "Prefill about 200 tok/s on a cold prompt of about 4,100 tokens, 1.65x engine-v0.1.0. Decode about 30 tok/s at short context, 1.14x the Q3 baseline model on the same card. Not yet measured at 32K or 65K."
@@ -135,7 +135,7 @@ A GPU matches a card when its compute capability equals `compute_capability` and
 
 | Key | Type | Required | Meaning |
 |---|---|---|---|
-| `release` | string | yes | The engine release the recipe was measured on, such as `engine-v0.3.0`. |
+| `release` | string | yes | The engine release the recipe was measured on, such as `engine-v0.4.0`. |
 | `arch` | string | yes | The GPU architecture of the image, such as `sm60`. |
 | `image` | string | yes | The engine image, always by digest: `name@sha256:<64 hex>`. A tag is refused. |
 

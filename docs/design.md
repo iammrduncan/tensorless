@@ -1,8 +1,8 @@
 # tensorless: design
 
-Status: v0.3.0 released, 2026-11-23 (engine-v0.3.0, image 0.3.0-sm60, launcher v0.3.0). v0.2.0 was released on 2026-11-12 (engine-v0.2.0, image 0.2.0-sm60), and v0.1.0 on 2026-11-02 (engine-v0.1.0, image 0.1.0-sm60).
+Status: v0.4.0 released, 2026-11-24 (engine-v0.4.0, image 0.4.0-sm60, launcher v0.4.0). v0.3.0 was released on 2026-11-23 (engine-v0.3.0, image 0.3.0-sm60), v0.2.0 on 2026-11-12 (engine-v0.2.0, image 0.2.0-sm60), and v0.1.0 on 2026-11-02 (engine-v0.1.0, image 0.1.0-sm60).
 
-engine-v0.3.0 is the champion of a decode hill climb on North-Mini-Code-1.0 that started from engine-v0.2.0, plus two fixes made after the import and one build flag. It adds a third launch target, `unsloth/North-Mini-Code-1.0-GGUF`. All three recipes are on it, released after the published image was measured with each model ([receipts](receipts/engine-v0.3.0/)). engine-v0.2.0 was the champion of the prefill hill climb that started from engine-v0.1.0, plus one fix.
+engine-v0.4.0 is the champion of a goal campaign that started from engine-v0.3.0: it runs Thinking Machines' Inkling-2-Mini, read in place from LookAtMyQuant's 12.8 GB pack of 63 files. With it, a recipe can name a pack of files and a prepare step, which the launcher runs in the engine image before the server ([recipes/README.md](../recipes/README.md#a-pack-instead-of-one-file)). The Inkling-2-Mini recipe is a draft in this release: the published image was not measured with it. The three launch targets are on engine-v0.4.0, released after the published image was measured with each model, with `GGML_CUDA_SYNC_SCHED = "auto"` added to keep engine-v0.3.0's host sync schedule ([receipts](receipts/engine-v0.4.0/)). engine-v0.3.0 was the champion of a decode hill climb on North-Mini-Code-1.0, and engine-v0.2.0 of the prefill hill climb that started from engine-v0.1.0.
 
 ## The goal
 
@@ -25,7 +25,7 @@ The launcher detects the card, picks the recipe for that model on that card, pul
 
 ### Why not one image per model
 
-- **One engine build already serves several models.** The P100 engine runs Qwen3.8-27B-PN3, Qwen3.8-27B-UD-IQ3_XXS-Q3Floor (Unsloth's UD-IQ3_XXS with a 3-bit floor) and North-Mini-Code-1.0 from the same binary. Every step of the two Qwen3.8-27B climbs was checked against Qwen3.8-27B-UD-IQ3_XXS-Q3Floor, which had to produce bit-identical text, so a change for one model could not silently break the other. The PN kernels only engage on PN tensor types.
+- **One engine build already serves several models.** The P100 engine runs Qwen3.8-27B-PN3, Qwen3.8-27B-UD-IQ3_XXS-Q3Floor (Unsloth's UD-IQ3_XXS with a 3-bit floor), North-Mini-Code-1.0 and, as a draft, Inkling-2-Mini from the same binary. Every step of the two Qwen3.8-27B climbs was checked against Qwen3.8-27B-UD-IQ3_XXS-Q3Floor, which had to produce bit-identical text, so a change for one model could not silently break the other. The PN kernels only engage on PN tensor types.
 - **What differs per model is runtime configuration:** the engine's `GGML_CUDA_*` switches and the server's flags (context length, KV-cache type, batch sizes, offload). That is data, so it goes in a recipe.
 - **A fix should be one rebuild, not one rebuild per model.**
 
