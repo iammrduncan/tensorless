@@ -1,6 +1,6 @@
 ---
 title: "Engine switches"
-description: "The GGML_CUDA_* environment variables the P100 recipes set, what each one selects in the engine, and its default."
+description: "The GGML_CUDA_* environment variables the P100 recipes set, what each one selects in the engine, and its default, the host sync schedule included."
 type: reference
 sidebar:
   order: 5
@@ -8,7 +8,7 @@ sidebar:
 
 The engine's P100 kernels are opt-in. Each is turned on by a `GGML_CUDA_*` environment variable, which a recipe sets in its `[run.env]` table, exactly as the release gate measured it. The launcher passes them to the container with `-e`, in alphabetical order. Leaving one out, or changing its value, runs a configuration that was not measured.
 
-All three recipes set the same 21 switches with the same values, and neither engine-v0.2.0 nor engine-v0.3.0 changed the set. The engine reads each one once, when it is first needed. The source files named below are under [`engine/ggml/src/ggml-cuda/`](https://github.com/iammrduncan/tensorless/tree/main/engine/ggml/src/ggml-cuda).
+Every recipe sets the same 21 switches with the same values, and no engine release since engine-v0.1.0 changed the set. From engine-v0.4.0, the three released recipes also set [`GGML_CUDA_SYNC_SCHED`](#the-host-sync-schedule) to `auto`. The engine reads each one once, when it is first needed. The source files named below are under [`engine/ggml/src/ggml-cuda/`](https://github.com/iammrduncan/tensorless/tree/main/engine/ggml/src/ggml-cuda).
 
 The PN weight types need no switch: their kernels run whenever a tensor is `pn3t` or `pn4t`. That includes engine-v0.2.0's [PN prefill path](#the-pn-prefill-path), which is on by default. engine-v0.3.0's [decode paths for North-Mini-Code-1.0](#the-north-mini-code-10-decode-path) need no switch either.
 
@@ -78,6 +78,16 @@ engine-v0.3.0's decode work for North-Mini-Code-1.0 is on by default: the hill c
 | `GGML_CUDA_SWIGLU_Q8_OFF` | on | Set, the SwiGLU step no longer writes the q8_1 input of the experts' down projection, which then quantizes it itself (`ggml-cuda.cu`). |
 
 A run with either set is not the measured configuration.
+
+## The host sync schedule
+
+New in engine-v0.4.0 (`ggml-cuda.cu`). It sets how the host thread waits for the GPU in a CUDA synchronize, once per device when the engine starts. With `blocking`, `yield` or `spin`, the server's log says `host sync schedule` and the value; any other value is ignored.
+
+| Variable | Released recipes | Unset | Values |
+|---|---|---|---|
+| `GGML_CUDA_SYNC_SCHED` | `auto` | `blocking` | `blocking`: sleep until the GPU signals. `yield`: spin, yielding the CPU between checks. `spin`: always spin. `auto`: the CUDA driver's default, which spins when the machine has fewer GPUs than CPU cores; engine-v0.3.0 and earlier always used it. |
+
+On the release gate's P100, `blocking` read about 1% slower than `auto` for Qwen3.8-27B-PN3, and the same within the runs' spread for the other two launch targets, so their recipes set `auto` ([Receipts](receipts.md#the-host-sync-schedule)). The Inkling-2-Mini recipe, a draft, leaves it unset: its research build was measured with `blocking`.
 
 ## Other switches
 

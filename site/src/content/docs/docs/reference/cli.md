@@ -113,10 +113,12 @@ tensorless pull iamMrDuncan/Qwen3.8-27B-PN3-GGUF
 2. Downloads the model file at the recipe's revision into the Hugging Face cache, as `<cache>/models--<org>--<repo>/blobs/<sha256>`, and checks its sha256.
 3. Links it into the snapshot, `<cache>/models--<org>--<repo>/snapshots/<revision>/<file>`, so other Hugging Face tools find it.
 
+For a model that is a pack of files (a recipe with [`[model.pack]`](recipes.md#modelpack)), steps 2 and 3 are done for each file, one after the other, and the pack is the snapshot folder `<cache>/models--<org>--<repo>/snapshots/<revision>/`.
+
 | Behavior | Detail |
 |---|---|
 | Resume | An interrupted download is kept as `<blob>.incomplete`. The next `pull` hashes what is there and resumes with an HTTP range request. |
-| Disk space | Checked before the download. Too little space fails with the space needed and the space free. |
+| Disk space | Checked before the download, for every file still to download. Too little space fails with the space needed and the space free. |
 | Stall | A download that receives nothing for 2 minutes fails; run the command again to resume. |
 | Already cached | A cached file is hashed once. A marker in the state directory then skips the hash while the file's size and modification time stay the same. |
 | sha256 mismatch | The download is deleted and the command fails. |
@@ -158,6 +160,17 @@ podman run -d --rm --name <container name> \
 - `T` is the smaller of the host's CPU count and the recipe's `run.threads_max`.
 - The GPU is `all` when every GPU on the host matches the recipe's card. When some do not, the container gets only the matched GPU, so `llama-server` cannot land on a card the image was not built for. `--gpu N` always gives only GPU `N`.
 - `--host` with an IPv6 address is published as `[ADDR]:<port>:8080`.
+
+For a pack, `serve` (and `run`) first runs the recipe's prepare step, once per serve. It empties the output folder, `<state>/prepared/<org>--<repo>/<card>/<revision>-<image digest>/` (12 characters of each; see [Files and environment variables](files-and-environment.md)), and runs, with no GPU and no network:
+
+```text
+podman run --rm --network none --security-opt label=disable \
+    -v <cache>/models--<org>--<repo>:/models/repo:ro -v <output folder>:/models/prepared \
+    --entrypoint <prepare[0]> <engine.image> <prepare[1:]> \
+    /models/repo/snapshots/<revision> /models/prepared
+```
+
+The last line the step prints must be a file in `/models/prepared`; if the step fails or prints anything else, `serve` fails before the server starts. The server's command then mounts `-v <cache>/models--<org>--<repo>:/models/repo:ro -v <output folder>:/models/prepared:ro` instead of the blob, and its `-m` is that file. Until the step has run, `info` and `--dry-run` show `-m '<the file the prepare step prints>'`.
 
 ## stop
 
@@ -216,13 +229,13 @@ tensorless info pn3 --card p100 --json
 
 Shows a recipe exactly as it would run. It needs no GPU, downloads nothing and starts nothing. It shows:
 
-- the model's repository, revision, file, sha256, size, license and download URL, and its place in the cache;
+- the model's repository, revision, file, sha256, size, license and download URL, and its place in the cache; for a pack, every file with its size and sha256, and the prepare step's command;
 - the card requirements and the engine image;
 - the run settings, the thread count, and the full container command with the endpoint;
 - whether the run is untuned, and why;
 - the receipt: summary, source, decode and prefill numbers, and notes.
 
-`--context` and arguments after `--` show in the command and the `UNTUNED` line. The JSON output has `recipe`, `published`, `unpublished`, `fits`, `untuned`, `download` (`url`, `blob`, `snapshot`, `size_bytes`, `cached`), `runtime`, `gpu`, `threads`, `command` and `endpoint`.
+`--context` and arguments after `--` show in the command and the `UNTUNED` line. The JSON output has `recipe`, `published`, `unpublished`, `fits`, `untuned`, `download` (`url`, `blob`, `snapshot`, `size_bytes`, `cached`), `runtime`, `gpu`, `threads`, `command` and `endpoint`. For a pack, `download`'s `url`, `blob` and `snapshot` are folders, its `size_bytes` and `cached` are the whole pack's, and `download.files` lists each file the same way; `prepare` holds the prepare step's command.
 
 ## doctor
 

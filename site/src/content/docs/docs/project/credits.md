@@ -20,10 +20,13 @@ License obligations for the code tensorless ships are in [NOTICE](https://github
 - **[exllamav3](https://github.com/turboderp-org/exllamav3)**, turboderp: the EXL3 format, whose code the engine uses for its EXL3 weight types. MIT.
 - **Vendored libraries:** cpp-httplib, nlohmann/json, miniaudio, stb_image, subprocess.h, xxHash, SHA-1, SHA-256 and rotate-bits. See [THIRD_PARTY_NOTICES.md](https://github.com/iammrduncan/tensorless/blob/main/THIRD_PARTY_NOTICES.md).
 - **[BurntSushi/toml](https://github.com/BurntSushi/toml)**, used by the launcher. MIT.
+- **[LookAtMyQuant](https://github.com/ShinMegamiBoson/lookatmyquant)**, ShinMegamiBoson: the `inkling2-packed-v1` format that the Inkling-2-Mini pack is in. The engine's decoders for its trellis, Lloyd-Max and NVFP4 codes (`ggml-inkling2.h`) are ports of its format readers (`formats.py`, `format_metadata.py`), and its reference implementation is what the engine's Inkling-2-Mini output was held to. MIT.
 
 ## Models and quantizations
 
 - **The Qwen team (Alibaba): [Qwen3.8-27B](https://huggingface.co/Qwen/Qwen3.8-27B).** The base model of the two Qwen3.8-27B launch targets. Apache-2.0.
+- **[Thinking Machines](https://huggingface.co/thinkingmachines): [Inkling-2-Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini).** The model of the Inkling-2-Mini recipe, a draft for engine-v0.4.0, and of the goal campaign behind that engine. Apache-2.0.
+- **ShinMegamiBoson: [shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB](https://huggingface.co/shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB).** The 12.8 GB LookAtMyQuant pack that recipe runs, unmodified and read in place. Apache-2.0.
 - **[CohereLabs](https://huggingface.co/CohereLabs): [North-Mini-Code-1.0](https://huggingface.co/CohereLabs/North-Mini-Code-1.0).** The model of the North-Mini-Code-1.0 launch target, and of the decode hill climb behind engine-v0.3.0. Apache-2.0.
 - **[Unsloth](https://huggingface.co/unsloth): [unsloth/North-Mini-Code-1.0-GGUF](https://huggingface.co/unsloth/North-Mini-Code-1.0-GGUF).** The UD-IQ3_XXS file that launch target runs, unmodified. Apache-2.0.
 - **[Unsloth](https://huggingface.co/unsloth): [unsloth/Qwen3.8-27B-GGUF](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF).** Qwen3.8-27B-UD-IQ3_XXS-Q3Floor is mostly their work:
@@ -55,6 +58,7 @@ License obligations for the code tensorless ships are in [NOTICE](https://github
 - **[Lucebox](https://github.com/Luce-Org/lucebox-hub)**, Luce-Org: DFlash with DDTree on the RTX 3090, and a hybrid DeltaNet megakernel.
 - **[0xSero/qwen38-b70](https://github.com/0xSero/qwen38-b70)** (Qwen3.8-27B on Intel Arc Pro B70) and **[0xSero/trellis-serve](https://github.com/0xSero/trellis-serve)** (EXL3 trellis kernels on the RTX 3090).
 - **[MiaAI-Lab's one-click Qwen3.8-27B installer](https://github.com/MiaAI-Lab/Qwen3.8-27B-16gb-NVIDIA-GPUs-one-click-install):** an EXL3 configuration for 16 GB cards.
+- **[transformers](https://github.com/huggingface/transformers)**, Hugging Face: its `modeling_inkling2_loop.py`, after which the engine's `inkling2_loop` model was written. Apache-2.0.
 - **[exllamav2](https://github.com/turboderp-org/exllamav2)**, for reconstructing to fp16 for wide batches. **[SGLang](https://github.com/sgl-project/sglang)** and **[vLLM](https://github.com/vllm-project/vllm)**, for their Qwen3.8 and hybrid-model implementations; vLLM also ran our structured-output evaluation.
 - **llama.cpp pull requests and discussions we built on:**
   - the fused gated-delta-net kernel ([#19504](https://github.com/ggml-org/llama.cpp/pull/19504));
@@ -62,7 +66,9 @@ License obligations for the code tensorless ships are in [NOTICE](https://github
   - deterministic mode ([#16016](https://github.com/ggml-org/llama.cpp/pull/16016));
   - DFlash2 support ([#27342](https://github.com/ggml-org/llama.cpp/pull/27342));
   - the CUDA graphs work ([#6766](https://github.com/ggml-org/llama.cpp/pull/6766));
-  - the KV-cache quantization KLD tables ([discussion #23470](https://github.com/ggml-org/llama.cpp/discussions/23470)).
+  - the KV-cache quantization KLD tables ([discussion #23470](https://github.com/ggml-org/llama.cpp/discussions/23470));
+  - the design of the Inkling-2 graphs (`src/models/inkling2.cpp`, `inkling2-loop.cpp`): slot numbering, the depth mix, message gates, convolutions with recurrent state and the sink folded into the bias table, which the engine's `inkling2_loop` follows (MIT);
+  - flash attention with an indexed bias ([#32740](https://github.com/ggml-org/llama.cpp/pull/32740)), whose contract (an F32 bias table and an I32 index) the engine's `ggml_flash_attn_ext_add_indexed_bias` implements for the CPU and for `sm_60` (MIT).
 
 ## Papers
 

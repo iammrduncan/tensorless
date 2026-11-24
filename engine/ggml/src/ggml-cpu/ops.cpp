@@ -8685,6 +8685,11 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
     const ggml_tensor * mask  = dst->src[3];
     const ggml_tensor * sinks = dst->src[4];
 
+    const ggml_tensor * bias_table   = dst->src[6];
+    const ggml_tensor * bias_indices = dst->src[7];
+    const int64_t n_bins = bias_table ? bias_table->ne[0] : 0;
+    GGML_UNUSED(n_bins);
+
     GGML_TENSOR_LOCALS(int64_t, neq, q,   ne)
     GGML_TENSOR_LOCALS(size_t,  nbq, q,   nb)
     GGML_TENSOR_LOCALS(int64_t, nek, k,   ne)
@@ -8780,6 +8785,10 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
 
         const ggml_fp16_t * mp = mask ? (ggml_fp16_t *)((char *) mask->data + iq1*mask->nb[1] + (iq2%mask->ne[2])*mask->nb[2] + (iq3%mask->ne[3])*mask->nb[3]) : NULL;
 
+        // indexed bias rows of this query and head, queries of all streams are flattened
+        const float   * bias = bias_table   ? (const float   *) ((const char *) bias_table->data   + (iq3*neq1 + iq1)*bias_table->nb[2] + iq2*bias_table->nb[1]) : nullptr;
+        const int32_t * bins = bias_indices ? (const int32_t *) ((const char *) bias_indices->data + (iq3*neq1 + iq1)*bias_indices->nb[1]) : nullptr;
+
         // k indices
         const int ik3 = iq3 / rk3;
         const int ik2 = iq2 / rk2;
@@ -8796,7 +8805,12 @@ static void ggml_compute_forward_flash_attn_ext_f16_one_chunk(
         // ref: https://arxiv.org/pdf/2112.05682.pdf
 
         for (int64_t ic = ic_start; ic < ic_end; ++ic) {
-            const float mv = mp ? slope*GGML_CPU_FP16_TO_FP32(mp[ic]) : 0.0f;
+            float mv = mp ? GGML_CPU_FP16_TO_FP32(mp[ic]) : 0.0f;
+            if (bias) {
+                GGML_ASSERT(bins[ic] >= 0 && bins[ic] < n_bins);
+                mv += bias[bins[ic]];
+            }
+            mv *= slope;
             if (mv == -INFINITY) {
                 continue;
             }
@@ -8918,6 +8932,11 @@ static void ggml_compute_forward_flash_attn_ext_tiled(
     const ggml_tensor * v     = dst->src[2];
     const ggml_tensor * mask  = dst->src[3];
     const ggml_tensor * sinks = dst->src[4];
+
+    const ggml_tensor * bias_table   = dst->src[6];
+    const ggml_tensor * bias_indices = dst->src[7];
+    const int64_t n_bins = bias_table ? bias_table->ne[0] : 0;
+    GGML_UNUSED(n_bins);
 
     GGML_TENSOR_LOCALS(int64_t, neq, q,   ne)
     GGML_TENSOR_LOCALS(size_t,  nbq, q,   nb)
@@ -9060,8 +9079,15 @@ static void ggml_compute_forward_flash_attn_ext_tiled(
                 bool can_skip = true;
                 for (int tq = 0; tq < tile_rows; tq++) {
                     const ggml_fp16_t * mp_row = (const ggml_fp16_t *)((const char *) mask->data + (iq1 + tq)*mask->nb[1] + (iq2%mask->ne[2])*mask->nb[2] + (iq3%mask->ne[3])*mask->nb[3]);
+                    const float   * bias = bias_table   ? (const float   *) ((const char *) bias_table->data   + (iq3*neq1 + iq1 + tq)*bias_table->nb[2] + iq2*bias_table->nb[1]) : nullptr;
+                    const int32_t * bins = bias_indices ? (const int32_t *) ((const char *) bias_indices->data + (iq3*neq1 + iq1 + tq)*bias_indices->nb[1]) : nullptr;
                     for (int tk = 0; tk < kv_tile; tk++) {
-                        mask32[tq * KV_TILE_SZ + tk] = slope * GGML_CPU_FP16_TO_FP32(mp_row[ic + tk]);
+                        float m = GGML_CPU_FP16_TO_FP32(mp_row[ic + tk]);
+                        if (bias) {
+                            GGML_ASSERT(bins[ic + tk] >= 0 && bins[ic + tk] < n_bins);
+                            m += bias[bins[ic + tk]];
+                        }
+                        mask32[tq * KV_TILE_SZ + tk] = slope * m;
                         if (mask32[tq * KV_TILE_SZ + tk] != -INFINITY) {
                             can_skip = false;
                         }
@@ -12418,5 +12444,147 @@ void ggml_compute_forward_lightning_indexer(
                 dst_row[ik] = score + GGML_CPU_FP16_TO_FP32(m_row[ik]);
             }
         }
+    }
+}
+
+// ggml_compute_forward_ink2_mul_mat: Inkling-2 packed matrices, decoded row by row (reference path)
+
+#include "ggml-inkling2.h"
+
+static ink2_matrix ink2_matrix_of(const ggml_tensor * dst, int64_t slab) {
+    const ggml_tensor * codes  = dst->src[0];
+    const ggml_tensor * scales = dst->src[1];
+    const ggml_tensor * table  = dst->src[2];
+    ink2_matrix m;
+    m.fmt    = ggml_get_op_params_i32(dst, 0);
+    m.n      = ggml_get_op_params_i32(dst, 2);
+    m.codes  = (const uint8_t *) codes->data;
+    m.scales = (const uint8_t *) scales->data;
+    m.table  = table->data;
+    m.e4m3   = dst->src[3] ? (const float *) dst->src[3]->data : nullptr;
+    m.outer  = 1.0f;
+    if (slab >= 0) {
+        if (m.fmt == INK2_NVFP4) {
+            m.codes  += slab * codes->nb[2];
+            m.scales += slab * scales->nb[2];
+            m.outer   = ((const float *) table->data)[slab];
+        } else {
+            m.codes  += slab * codes->nb[2];
+            m.scales += slab * scales->nb[1];
+        }
+    }
+    return m;
+}
+
+void ggml_compute_forward_ink2_mul_mat(const ggml_compute_params * params, ggml_tensor * dst) {
+    const ggml_tensor * x   = dst->src[4];
+    const ggml_tensor * ids = dst->src[5];
+    const ggml_tensor * map = dst->src[6];
+    const int     fmt = ggml_get_op_params_i32(dst, 0);
+    const int64_t M   = ggml_get_op_params_i32(dst, 1);
+    const int64_t K   = ggml_get_op_params_i32(dst, 2);
+    const int ith = params->ith, nth = params->nth;
+    float * row = (float *) params->wdata + ith * (K + 16);
+    float * y   = (float *) dst->data;
+
+    if (!ids) {
+        const int64_t N = dst->ne[1];
+        const int64_t M_out = dst->ne[0];
+        const int32_t * row_map = dst->src[7] ? (const int32_t *) dst->src[7]->data : nullptr;
+        const ink2_matrix m = ink2_matrix_of(dst, -1);
+        for (int64_t r = ith; r < M; r += nth) {
+            ink2_decode_row(&m, r, row);
+            for (int64_t t = 0; t < N; ++t) {
+                const float * xt = (const float *) x->data + t * K;
+                float s = 0.0f;
+                for (int64_t k = 0; k < K; ++k) {
+                    s += row[k] * xt[k];
+                }
+                y[t * M_out + (row_map ? row_map[r] : r)] = s;
+            }
+        }
+        return;
+    }
+
+    const int64_t n_used = ids->ne[0], N = ids->ne[1], n_xs = x->ne[1];
+    const int64_t n_exp  = map->ne[1];
+    const int16_t * mp = (const int16_t *) map->data;
+    const int32_t * id = (const int32_t *) ids->data;
+    for (int64_t i = 0; i < n_used * N; ++i) {
+        const int e = id[i];
+        if (e < 0 || e >= n_exp || mp[2 * e] != fmt) {
+            if (ith == 0 && !ggml_get_op_params_i32(dst, 3)) {
+                memset(y + i * M, 0, M * sizeof(float));
+            }
+            continue;
+        }
+        const ink2_matrix m = ink2_matrix_of(dst, mp[2 * e + 1]);
+        const int64_t t = i / n_used, s = i % n_used;
+        const float * xt = (const float *) x->data + (t * n_xs + (n_xs > 1 ? s : 0)) * K;
+        for (int64_t r = ith; r < M; r += nth) {
+            ink2_decode_row(&m, r, row);
+            float acc = 0.0f;
+            for (int64_t k = 0; k < K; ++k) {
+                acc += row[k] * xt[k];
+            }
+            y[i * M + r] = acc;
+        }
+    }
+}
+
+void ggml_compute_forward_ink2_rel_bias(const ggml_compute_params * params, ggml_tensor * dst) {
+    const ggml_tensor * table = dst->src[1];
+    const ggml_tensor * idx   = dst->src[2];
+    float * y = (float *) dst->data;
+    const int64_t n_kv = dst->ne[0], n_q = dst->ne[1], n_head = dst->ne[2];
+    for (int64_t h = params->ith; h < n_head; h += params->nth) {
+        for (int64_t q = 0; q < n_q; ++q) {
+            const int32_t * id = (const int32_t *) ((const char *) idx->data + q * idx->nb[1]);
+            const char * tq = (const char *) table->data + q * table->nb[2] + h * sizeof(float);
+            float * yr = y + (h * n_q + q) * n_kv;
+            for (int64_t j = 0; j < n_kv; ++j) {
+                yr[j] += *(const float *) (tq + id[j] * table->nb[1]);
+            }
+        }
+    }
+}
+
+void ggml_compute_forward_ink2_rht(const ggml_compute_params * params, ggml_tensor * dst) {
+    const ggml_tensor * x  = dst->src[0];
+    const ggml_tensor * Bt = dst->src[1];
+    const float * si = dst->src[2] ? (const float *) dst->src[2]->data : nullptr;
+    const float * so = dst->src[3] ? (const float *) dst->src[3]->data : nullptr;
+    const int a = ggml_get_op_params_i32(dst, 0);
+    const float scale = ggml_get_op_params_f32(dst, 1);
+    const int64_t n = x->ne[0], b = Bt->ne[0], cnt = ggml_nelements(x) / n;
+    const float * B = (const float *) Bt->data;
+    // ggml_ink2_rht_multi: set s takes its signs from src[2] (s = 0) or src[3 + s] and writes the s-th [n, cnt] slice
+    const int n_sets = std::max(1, ggml_get_op_params_i32(dst, 2));
+    std::vector<float> xs(n), z(n);
+    for (int64_t cs = params->ith; cs < cnt * n_sets; cs += params->nth) {
+        const int64_t c = cs % cnt, set = cs / cnt;
+        if (set > 0) si = (const float *) dst->src[3 + set]->data;
+        else if (n_sets > 1) si = (const float *) dst->src[2]->data;
+        const float * xc = (const float *) x->data + c * n;
+        for (int64_t i = 0; i < n; ++i) xs[i] = si ? xc[i] * si[i] : xc[i];
+        for (int64_t ak = 0; ak < a; ++ak) {
+            for (int64_t bi = 0; bi < b; ++bi) {
+                float acc = 0.0f;
+                for (int64_t bk = 0; bk < b; ++bk) acc += B[bk * b + bi] * xs[ak * b + bk];
+                z[ak * b + bi] = acc;
+            }
+        }
+        for (int64_t h = 1; h < a; h *= 2) { // Sylvester factor, natural order
+            for (int64_t j = 0; j < a; ++j) {
+                if (j & h) continue;
+                for (int64_t bi = 0; bi < b; ++bi) {
+                    const float u = z[j * b + bi], v = z[(j + h) * b + bi];
+                    z[j * b + bi] = u + v;
+                    z[(j + h) * b + bi] = u - v;
+                }
+            }
+        }
+        float * yc = (float *) dst->data + cs * n;
+        for (int64_t i = 0; i < n; ++i) yc[i] = so ? (z[i] * scale) * so[i] : z[i] * scale;
     }
 }

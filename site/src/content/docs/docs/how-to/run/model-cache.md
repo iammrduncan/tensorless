@@ -70,7 +70,9 @@ models--iamMrDuncan--Qwen3.8-27B-PN3-GGUF/
 - **The snapshot** is a symlink named after the recipe's revision and file, so other Hugging Face tools that ask for that revision find the file.
 - **A partial download** is the blob's name with `.incomplete` added. Run the same command again to resume it where it stopped. `tensorless models` shows such a model as `partial`.
 
-Before a download, the launcher checks that the disk has room for it and refuses with `not enough disk space` if not.
+A model that is a pack of files has one blob and one snapshot link per file, all in the same snapshot folder. `tensorless models` shows it as `yes` only when every file is there, and as `partial` when some are. The server's container mounts the model's whole folder, `models--<org>--<repo>`, read-only.
+
+Before a download, the launcher checks that the disk has room for it (for a pack, for every file still to download) and refuses with `not enough disk space` if not.
 
 The launcher remembers which files it has verified in `$XDG_STATE_HOME/tensorless/verified/`, or `~/.local/state/tensorless/verified/` when `XDG_STATE_HOME` is not set: one small file per model, named by its sha256. While the model file keeps the same path, size and modification time, the launcher does not hash it again. Deleting these markers is safe; the next run verifies again.
 

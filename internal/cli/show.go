@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"text/tabwriter"
@@ -52,7 +53,7 @@ func (a *App) cmdModels(ctx context.Context, o *options) error {
 	for _, r := range set.Recipes {
 		cached := "unknown"
 		if cerr == nil {
-			cached = hfcache.Status(cache, modelFile(r))
+			cached = cacheStatus(cache, modelFiles(r))
 		}
 		rows = append(rows, modelRow{
 			Model: r.Repo(), Name: r.Model.Name, Card: r.Card.ID, Title: r.Model.Title, Status: r.Status, Published: r.Published(),
@@ -75,12 +76,15 @@ func (a *App) cmdModels(ctx context.Context, o *options) error {
 	return nil
 }
 
+// infoDownload is the model's download. For a pack, URL, Blob and Snapshot
+// are folders, Size and Cached are the whole pack's, and Files has each file.
 type infoDownload struct {
-	URL      string `json:"url"`
-	Blob     string `json:"blob"`
-	Snapshot string `json:"snapshot"`
-	Size     int64  `json:"size_bytes"`
-	Cached   string `json:"cached"`
+	URL      string         `json:"url"`
+	Blob     string         `json:"blob"`
+	Snapshot string         `json:"snapshot"`
+	Size     int64          `json:"size_bytes"`
+	Cached   string         `json:"cached"`
+	Files    []infoDownload `json:"files,omitempty"`
 }
 
 type infoOut struct {
@@ -93,8 +97,33 @@ type infoOut struct {
 	Runtime     string         `json:"runtime"`
 	GPU         string         `json:"gpu"`
 	Threads     int            `json:"threads"`
+	Prepare     []string       `json:"prepare,omitempty"` // a pack's prepare step, run before Command
 	Command     []string       `json:"command"`
 	Endpoint    string         `json:"endpoint"`
+}
+
+func (a *App) download(cache string, r *recipe.Recipe) infoDownload {
+	endpoint := a.getenv("HF_ENDPOINT")
+	files := modelFiles(r)
+	one := func(f hfcache.File) infoDownload {
+		return infoDownload{URL: hfcache.URL(endpoint, f), Blob: hfcache.BlobPath(cache, f), Snapshot: hfcache.SnapshotPath(cache, f),
+			Size: f.Size, Cached: hfcache.Status(cache, f)}
+	}
+	if !r.IsPack() {
+		return one(files[0])
+	}
+	base := hfcache.URL(endpoint, hfcache.File{Repo: r.Repo(), Revision: r.Model.Revision, Path: "x"})
+	d := infoDownload{
+		URL:      strings.TrimSuffix(base, "x"),
+		Blob:     filepath.Join(hfcache.RepoDir(cache, r.Repo()), "blobs"),
+		Snapshot: hfcache.SnapshotDir(cache, r.Repo(), r.Model.Revision),
+		Size:     r.TotalBytes(),
+		Cached:   cacheStatus(cache, files),
+	}
+	for _, f := range files {
+		d.Files = append(d.Files, one(f))
+	}
+	return d
 }
 
 func (a *App) cmdInfo(ctx context.Context, o *options) error {
@@ -135,8 +164,7 @@ func (a *App) cmdInfo(ctx context.Context, o *options) error {
 	if err != nil {
 		return err
 	}
-	f := modelFile(r)
-	spec, err := a.spec(t, o, rt, hfcache.BlobPath(cache, f))
+	l, err := a.launch(t, o, rt, cache)
 	if err != nil {
 		return err
 	}
@@ -146,18 +174,15 @@ func (a *App) cmdInfo(ctx context.Context, o *options) error {
 		Unpublished: append([]string{}, r.Unpublished()...),
 		Fits:        fits(gpus, derr, r),
 		Untuned:     untuned(t, o),
-		Download: infoDownload{
-			URL:      hfcache.URL(a.getenv("HF_ENDPOINT"), f),
-			Blob:     hfcache.BlobPath(cache, f),
-			Snapshot: hfcache.SnapshotPath(cache, f),
-			Size:     f.Size,
-			Cached:   hfcache.Status(cache, f),
-		},
-		Runtime:  rt,
-		GPU:      deviceName(t.device),
-		Threads:  spec.Threads,
-		Command:  append([]string{rt}, spec.RunArgs()...),
-		Endpoint: container.BaseURL(o.host, o.port),
+		Download:    a.download(cache, r),
+		Runtime:     rt,
+		GPU:         deviceName(t.device),
+		Threads:     l.spec.Threads,
+		Command:     append([]string{rt}, l.spec.RunArgs()...),
+		Endpoint:    container.BaseURL(o.host, o.port),
+	}
+	if l.prepare != nil {
+		out.Prepare = append([]string{rt}, l.prepare.RunArgs()...)
 	}
 	if o.json {
 		return writeJSON(a.Stdout, out)
@@ -193,17 +218,32 @@ func (a *App) printInfo(out infoOut, derr error) {
 	section("Model")
 	kv("repository", r.Model.HFRepo)
 	kv("revision", r.Model.Revision)
-	kv("file", r.Model.File)
-	kv("sha256", r.Model.SHA256)
-	size := "unknown (size_bytes is 0)"
-	if r.Model.SizeBytes > 0 {
-		size = fmt.Sprintf("%s (%d bytes)", hfcache.FormatBytes(r.Model.SizeBytes), r.Model.SizeBytes)
+	size := "unknown (a size_bytes is 0)"
+	if !contains(out.Unpublished, "size_bytes") {
+		size = fmt.Sprintf("%s (%d bytes)", hfcache.FormatBytes(r.TotalBytes()), r.TotalBytes())
+	}
+	if r.IsPack() {
+		kv("pack", fmt.Sprintf("%d files, read in place after a prepare step", len(r.Files())))
+	} else {
+		kv("file", r.Model.File)
+		kv("sha256", r.Model.SHA256)
 	}
 	kv("size", size)
 	kv("license", r.Model.License)
 	kv("url", out.Download.URL)
-	kv("cache", out.Download.Blob)
+	if r.IsPack() {
+		kv("cache", out.Download.Snapshot)
+	} else {
+		kv("cache", out.Download.Blob)
+	}
 	kv("cached", out.Download.Cached)
+	if r.IsPack() {
+		w.Flush()
+		fmt.Fprintln(a.Stdout, "  files:")
+		for _, f := range r.Files() {
+			fmt.Fprintf(w, "    %s\t%s\t%s\n", f.Name, hfcache.FormatBytes(f.SizeBytes), f.SHA256)
+		}
+	}
 
 	section("Card")
 	kv("title", r.Card.Title)
@@ -229,6 +269,10 @@ func (a *App) printInfo(out infoOut, derr error) {
 		kv(label, k+"="+r.Run.Env[k])
 	}
 	w.Flush()
+	if out.Prepare != nil {
+		fmt.Fprintf(a.Stdout, "  prepare step (%s, before each serve; no GPU, no network):\n", out.Runtime)
+		fmt.Fprintf(a.Stdout, "    %s\n", strings.ReplaceAll(shellWrap(out.Prepare, 96), "\n", "\n  "))
+	}
 	fmt.Fprintf(a.Stdout, "  command (%s, GPU %s, endpoint %s):\n", out.Runtime, out.GPU, out.Endpoint)
 	fmt.Fprintf(a.Stdout, "    %s\n", strings.ReplaceAll(shellWrap(out.Command, 96), "\n", "\n  "))
 

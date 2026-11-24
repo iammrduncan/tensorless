@@ -41,7 +41,8 @@ const cards = recipes
     name: r.model.name,
     title: r.model.hf_repo.split("/")[1].replace(/-GGUF$/, ""),
     ...about[r.model.name],
-    size: (r.model.size_bytes / 2 ** 30).toFixed(2),
+    // A pack (model.pack) has no size_bytes of its own: its size is the sum of its files'.
+    size: ((r.model.pack ? r.model.pack.files.reduce((n, f) => n + f.size_bytes, 0) : r.model.size_bytes) / 2 ** 30).toFixed(2),
     measured: release.measured[r.model.hf_repo],
     license: r.model.license.split(" (")[0],
     cmd: `tensorless run ${r.model.hf_repo}`,

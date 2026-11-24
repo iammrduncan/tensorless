@@ -7,6 +7,10 @@
 # is built for a portable x86-64 baseline (AVX2/FMA/F16C) instead of the builder's own CPU.
 # CUDA stays on 12.x: CUDA 13 dropped Pascal. The host needs only the NVIDIA driver (R525 or newer,
 # on the R580 branch or older, which is Pascal's last).
+#
+# The runtime stage also holds the prepare steps of models that are packs of files: python3 and
+# numpy from Ubuntu, and engine/tools/inkling-prepare/ at /opt/tensorless/inkling-prepare/. The
+# launcher runs them with --entrypoint; the image's entrypoint stays llama-server.
 
 ARG CUDA_VERSION=12.6.3
 ARG UBUNTU=ubuntu24.04
@@ -34,11 +38,12 @@ RUN cmake -S engine -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
  && cp -a build/bin/*.so /out/bin/ \
  && objdump -p /out/bin/llama-server | grep -E 'NEEDED|RUNPATH'
 
-FROM docker.io/nvidia/cuda:${CUDA_VERSION}-runtime-${UBUNTU}
+FROM docker.io/nvidia/cuda:${CUDA_VERSION}-runtime-${UBUNTU} AS runtime
 ARG VERSION=dev
 RUN apt-get update \
- && apt-get install -y --no-install-recommends libgomp1 \
+ && apt-get install -y --no-install-recommends libgomp1 python3 python3-numpy \
  && rm -rf /var/lib/apt/lists/*
+COPY engine/tools/inkling-prepare/ /opt/tensorless/inkling-prepare/
 COPY --from=build /out/bin/ /opt/tensorless/bin/
 COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /opt/tensorless/
 COPY LICENSES/ /opt/tensorless/LICENSES/

@@ -1,0 +1,152 @@
+# Inkling-2-Mini on one Tesla P100 16 GB, from LookAtMyQuant's 12.8 GB pack.
+# shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB @ 758a177fdaba30e53cce1266504b5428290aa0c9, unmodified:
+# Thinking Machines' Inkling-2-Mini (inkling2_loop: 26.4B parameters, 3.4B active, about 5.4B with the loop, a mixture of experts whose middle
+# layers run three times), compressed by LookAtMyQuant into 63 files, 12,760,459,456 bytes (inkling2-packed-v1).
+# The engine reads the pack in place: nothing is converted or repacked. Before each serve, the prepare step writes a
+# small GGUF that names the pack's arrays, and llama-server is given that GGUF.
+# [run] is the configuration the goal campaign's judge measured it with, on this engine.
+# The image below is engine-v0.4.0's published image, 0.4.0-sm60. It has not been measured with this model yet, so the
+# recipe stays a draft until a later patch release gates it on a P100 (docs/receipts/engine-v0.4.0/).
+# GGML_CUDA_SYNC_SCHED is left at this engine's default, blocking, as the research build was measured.
+schema = 1
+status = "draft"
+
+[model]
+name     = "inkling2-mini"
+title    = "Inkling-2-Mini, LookAtMyQuant 12.8 GB pack"
+hf_repo  = "shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB"
+revision = "758a177fdaba30e53cce1266504b5428290aa0c9"
+license  = "Apache-2.0 (from thinkingmachines/Inkling-2-Mini and shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB)"
+
+[model.pack]
+prepare = ["python3", "-E", "-s", "/opt/tensorless/inkling-prepare/prepare.py"]
+files = [
+  { name = ".gitattributes",          sha256 = "34448b82c17d60fec9b65b1f093c115ddbaadc04beb1b0140b6bfed2e012a930", size_bytes =        1570 },
+  { name = "README.md",               sha256 = "93fd63c2e0e78477af44f4b72a53ee5e6e10882bc57ad76355b90c39a297130f", size_bytes =        5271 },
+  { name = "chat_template.jinja",     sha256 = "53a9035f3255945704b5857657cfb00c1165090c0641c4f782a0cbf268cc16dc", size_bytes =        6868 },
+  { name = "config.json",             sha256 = "8216dd43157f5474cfff88f486a1e433fef703c674f694e485a86a761c412b1e", size_bytes =        2699 },
+  { name = "embed_meta.json",         sha256 = "35af66c7219b87d7e5081dbe6700f72391c386138b0710aa57c84e24b9bb42b7", size_bytes =         654 },
+  { name = "embed_packed.npz",        sha256 = "41e80f05815383d5ddf485d2ace7e00f3f50b522ceda84fd5bd4acfc6337b428", size_bytes =   214346212 },
+  { name = "generation_config.json",  sha256 = "a08737c07a65a8fdf69f7cf086576210e5aad4b241437090b26d7b0c4f7905f7", size_bytes =          98 },
+  { name = "head_meta.json",          sha256 = "b7c682beaf84c5ac09756156320deb2bb84b7969214b51c060e7fe64ae0a2ea7", size_bytes =         654 },
+  { name = "head_packed.npz",         sha256 = "15e7687eae3314b0bdaebef9368f2085785508d898ae660e8e99643c8a735588", size_bytes =   248585920 },
+  { name = "layer_00_meta.json",      sha256 = "829865bb05fa22653be4952e0871727e2aad2590562d523c2b174b56a828a09c", size_bytes =        1307 },
+  { name = "layer_00_packed.npz",     sha256 = "c22613eb3f6b6990d3891c75ae6742d75ee7a887c70e18815928163e1fcbe9be", size_bytes =   417726908 },
+  { name = "layer_01_meta.json",      sha256 = "801c3046e06c5dbbc2ee42bfa9a63ef355efe00d7600f1bb37a87677c4e05cf2", size_bytes =        1286 },
+  { name = "layer_01_packed.npz",     sha256 = "80107d9eaec50ccfabbdebf580f3d190e078d931cf263e106aae51ac5daafbed", size_bytes =   409695784 },
+  { name = "layer_02_meta.json",      sha256 = "6be7bd010453b154466f0c53a846e32154478582064509b9f3ade459c362969a", size_bytes =        1257 },
+  { name = "layer_02_packed.npz",     sha256 = "1b526ae785a25d2738461af715139a1ef23ac4f2a2ed2094c8c6316b5e6dacae", size_bytes =   453125202 },
+  { name = "layer_03_meta.json",      sha256 = "95d492730a90184598d07dbee780107b8d5699bafa1e5ec8e3aec907a4763608", size_bytes =        1248 },
+  { name = "layer_03_packed.npz",     sha256 = "412955da9585d7a16536d3fb5bf2c3777ee75655290969ef642b4de5d57f0a93", size_bytes =   477822408 },
+  { name = "layer_04_meta.json",      sha256 = "3cccd4df5ca5623a4362c68db42f0d83a574f06efc8291ec9cd4f3ec40089ca7", size_bytes =        1222 },
+  { name = "layer_04_packed.npz",     sha256 = "795ef307bdeffa7ccda44ef37828eb3617045b8c63f8e398d25f138d9778489e", size_bytes =   467499202 },
+  { name = "layer_05_meta.json",      sha256 = "6d92b95c411401acc30c974296ce2f743a8362ffe050a0d9eeeeb89a54928663", size_bytes =        1288 },
+  { name = "layer_05_packed.npz",     sha256 = "30b0f5fa0dd335ac1185d62e645b80d51de1c10e964e7470646dad26730cfee3", size_bytes =   450172148 },
+  { name = "layer_06_meta.json",      sha256 = "d600cead84a6f0b00b4ffa79434e4c08ec0c0f520d92ad3c4d52d90a5e4811c6", size_bytes =        1306 },
+  { name = "layer_06_packed.npz",     sha256 = "49fb770d3d7fb0436d56457ae41a7dcae34a9dc05ec68694d9e533af910b8ae0", size_bytes =   482983102 },
+  { name = "layer_07_meta.json",      sha256 = "2c4fce572e874f0acc882eb2392bdd1dd16db781d78c1d6e17f4d538d2b4713c", size_bytes =        1225 },
+  { name = "layer_07_packed.npz",     sha256 = "1e5c0cce6df97d73ec3ede6a18957715a30e045330f42df5ef7a1b52f998d58f", size_bytes =   471782064 },
+  { name = "layer_08_meta.json",      sha256 = "769db80ce033a01ce1fd12117039882300137256643293893e12cc437ab7cd37", size_bytes =        1225 },
+  { name = "layer_08_packed.npz",     sha256 = "4a7fba6ec65d6c344f4635daa2ddf814e98e6b309dd2e212b3065110698be723", size_bytes =   503485232 },
+  { name = "layer_09_meta.json",      sha256 = "930ad24ff3f6b207e619936f8f3bfad8791a8309a7d18aa47260ad61cb689f50", size_bytes =        1209 },
+  { name = "layer_09_packed.npz",     sha256 = "83e4e1f82c087412fdd6666d5c27d6b5d843104930f8ca8b5e1662d9378c23bc", size_bytes =   535040558 },
+  { name = "layer_10_meta.json",      sha256 = "f90e2677fd5c8bf15be8bf7c1e44094bde16a420581c4eafde98cf644e8cf98d", size_bytes =        1226 },
+  { name = "layer_10_packed.npz",     sha256 = "451b19483e9e1aa2a91d66b70275fbfa7b655bfbab6cfe3ce6593aaadea85b1d", size_bytes =   505255472 },
+  { name = "layer_11_meta.json",      sha256 = "a4823a47487c022665ce3a96530c4a4ac0cc27e73260ee4f577cc7f71e45dcaf", size_bytes =        1210 },
+  { name = "layer_11_packed.npz",     sha256 = "17889a7edb946ed72ea98f10f94a3a66cbd68685a9572354bc551a1483521cfe", size_bytes =   536810798 },
+  { name = "layer_12_meta.json",      sha256 = "e1003a50ecf69f3171dbaa8830928a990e8317b965dfba5dd1e5a747384bf7cc", size_bytes =        1226 },
+  { name = "layer_12_packed.npz",     sha256 = "7e43b48ddd7fa9d96120d1e172aa63b3b75bd4a5037cb2a2bd7a54a9fb519e96", size_bytes =   473552304 },
+  { name = "layer_13_meta.json",      sha256 = "c2de2672181a6f88f837244df53667fd9ba0264ee2f9932c87ed422a2b35baaa", size_bytes =        1226 },
+  { name = "layer_13_packed.npz",     sha256 = "8961146fc592d6ecf3463df3ae2b9dbcfdd107dadb700cc8f3776d3cad2a30e7", size_bytes =   505255472 },
+  { name = "layer_14_meta.json",      sha256 = "6a42bec13d141187b8794231bc01c9bae6ace5e9f35b0c3db015e0e779b9b5d1", size_bytes =        1226 },
+  { name = "layer_14_packed.npz",     sha256 = "4678e3143222b3224c212abb025b970faaaa162f41e1ee74826813e9f29101d5", size_bytes =   505255472 },
+  { name = "layer_15_meta.json",      sha256 = "834e800aa4b83b898acabe907fe93d6382a07431ac7a9b28e1753470fec1ffdf", size_bytes =        1210 },
+  { name = "layer_15_packed.npz",     sha256 = "66aa795e51fff21691b4eed5aa07ba6680d18e4e620f05fc2304be08957fb472", size_bytes =   536810798 },
+  { name = "layer_16_meta.json",      sha256 = "718c47b17fde266861f5b951ada38370adb987ced5d606c320448ff2098a8be6", size_bytes =        1210 },
+  { name = "layer_16_packed.npz",     sha256 = "7bec1c10ae0e2fe0b0ad7a6f54d3537ae2607ba77b0990fbd8bfd105b9f450c6", size_bytes =   536810798 },
+  { name = "layer_17_meta.json",      sha256 = "9f7435c358167b17a8b9e402e05a1d5a8ea08eff418c87a937500a2f5fbc1865", size_bytes =        1210 },
+  { name = "layer_17_packed.npz",     sha256 = "970272d827db7fc4f3a6e0d9bccaed1e44d006d120a1557eda1e791de61adaef", size_bytes =   532679726 },
+  { name = "layer_18_meta.json",      sha256 = "95c7107272ff7f94748c0b09e2442daf55fb9008b39afb8e9d06cfe01cfbbb1d", size_bytes =        1194 },
+  { name = "layer_18_packed.npz",     sha256 = "69868cdb1b486336778d58cc773d2eb29641a574c0aed1fde116a80ae007d580", size_bytes =   600216620 },
+  { name = "layer_19_meta.json",      sha256 = "d4c6b552ab6d33c8edbaa2eb07ca989905b875845c6376c6c767545aad8631af", size_bytes =        1194 },
+  { name = "layer_19_packed.npz",     sha256 = "3d8a5c531928fbfa24371c9e5f2baf09de816c85ecd18d6bae866be44f257106", size_bytes =   600216620 },
+  { name = "layer_20_meta.json",      sha256 = "e3821b515ec153b87ef70717baeb62871694db099fd87010e6d82f81a680cbb3", size_bytes =        1192 },
+  { name = "layer_20_packed.npz",     sha256 = "f32a03331c9ec1f6cd3067df7a615b46afce068caf7881c1290d6dc115784a25", size_bytes =   535923484 },
+  { name = "layer_21_meta.json",      sha256 = "7ede1238523f74d3a8c23e0782d820df1c3b48d536e98f7126fd9ac64feeff82", size_bytes =        1192 },
+  { name = "layer_21_packed.npz",     sha256 = "26453d7134a852d2a36a087b77753d239899c07108c29a87af37c6dbcbd1be41", size_bytes =   535923484 },
+  { name = "layer_22_meta.json",      sha256 = "a8b7c66ce9d3345c735a05a3a70f15d0c229f87d78205b55baf173272b6305d5", size_bytes =        1192 },
+  { name = "layer_22_packed.npz",     sha256 = "87a2b7e86852d95be4f9a78822e6316c1f9f5e234061ae364483d6a8489367b4", size_bytes =   537693724 },
+  { name = "layer_23_meta.json",      sha256 = "ddee439ae18fad87e98ae0bcfb5fc57d05090fdff3f9515ddaddc972c3047659", size_bytes =        1192 },
+  { name = "layer_23_packed.npz",     sha256 = "9dc4e3e788b50df5c5686249c8919b5070f051ff6110110da3113e2129c8a31c", size_bytes =   537693724 },
+  { name = "luts.npz",                sha256 = "a395e850e6c72726accc4965d791967f55a2de472e8d09f97dac0c10890fb249", size_bytes =       35578 },
+  { name = "manifest.json",           sha256 = "a9d427084273bdeed66c6c8649e2bf9bb127a8f5e7f3e5c9f78930da226873f2", size_bytes =         585 },
+  { name = "special_tokens_map.json", sha256 = "c16f44b3594563d82743ddb0417a2be1bfe3e2000dfad2da4b8f32554593e1a0", size_bytes =         529 },
+  { name = "steering.safetensors",    sha256 = "97ac372a18b1ee57a6f5fa38d34c05c02ffb4093abd539ea1f2de00b894b1b45", size_bytes =   121820328 },
+  { name = "tokenizer.json",          sha256 = "7f332727f9a3f093dd452a39cc978e6757627e5dad1b0673aa4e75174f236dd6", size_bytes =    26178678 },
+  { name = "tokenizer_config.json",   sha256 = "bf09342d285139fd37ce10c70878af1d52cb390e9901e10248654293a80ee636", size_bytes =       13235 },
+]
+
+[card]
+id                 = "p100"
+title              = "NVIDIA Tesla P100 16 GB"
+compute_capability = "6.0"
+min_memory_mib     = 16000
+min_driver         = "525.60.13"
+
+[engine]
+release = "engine-v0.4.0"
+arch    = "sm60"
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997"   # 0.4.0-sm60 (built as 0.4.0-rc1-sm60); not yet measured with this model
+
+[run]
+alias       = "shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB"
+context     = 32768
+threads_max = 8
+args = [
+  "-np", "1",
+  "-ngl", "99",
+  "-ctk", "f16", "-ctv", "f16",
+  "-lm", "none",
+  "-fit", "off",
+  "--threads-http", "4",
+  "-b", "512", "-ub", "512",
+  "-fa", "auto",
+  "--jinja",
+]
+
+[run.env]
+GGML_CUDA_FATTN_SM60            = "1"
+GGML_CUDA_MMV_SM60              = "1"
+GGML_CUDA_FUSE_PRE_ADD          = "1"
+GGML_CUDA_MMV_SM60_XXS_STOCK    = "1"
+GGML_CUDA_SM86_IQ3_SMEM_GRID    = "1"
+GGML_CUDA_MMV_SM60_IQ3S_STOCK   = "1"
+GGML_CUDA_FATTN_SM60_CTAS       = "4"
+GGML_CUDA_MMV_SM60_XXS_KB_WIDE  = "1"
+GGML_CUDA_MMV_SM60_INPLACE_XXS  = "1"
+GGML_CUDA_MMV_SM60_INPLACE_IQ3S = "1"
+GGML_CUDA_MMV_SM60_Q4K_HEAD     = "1"
+GGML_CUDA_MMV_SM60_Q3K          = "1"
+GGML_CUDA_MMV_SM60_Q4K_DHEAD    = "1"
+GGML_CUDA_MMV_SM60_Q6K          = "1"
+GGML_CUDA_NORM_EMIT_Q8          = "1"
+GGML_CUDA_PREFILL_DEQ_F4        = "1"
+GGML_CUDA_PREFILL_REP_DIRECT    = "1"
+GGML_CUDA_PREFILL_CHUNK_GEMM    = "1"
+GGML_CUDA_PREFILL_CHUNK_STREAMS = "3"
+GGML_CUDA_SM86_GDN_COLS         = "8"
+GGML_CUDA_FATTN_TILE_OCC1       = "1"
+
+[receipt]
+source  = "The research build's numbers: the goal campaign's judge, on a source build of this engine's champion commit (champion 7), on one P100. engine-v0.4.0's published image has not been measured with this model yet."
+summary = "Decode about 28.5 tok/s after a 512-token prompt and 25.5 tok/s after 32,000; prefill about 240 tok/s on a cold 4,096-token prompt. A 32K context in 14,151 MiB. No speculative decoding in this recipe."
+decode_tps  = { short = 28.52, ctx_32k = 25.45 }
+prefill_tps = { ctx_4k = 239.89 }
+notes = [
+  "short / ctx_32k: the median of 3 and of 2 greedy replies of 128 tokens, after a cold 512- / 32,000-token prompt, timed by the client. Unlike the other recipes, short here is after 512 tokens, not 4,096.",
+  "ctx_4k prefill: a cold 4,096-token prompt.",
+  "Peak card memory 14,151 MiB at a 32,768-token context.",
+  "Against the pack's own float32 reference: mean KL 1.09e-4 and top-1 agreement 99.67% on LookAtMyQuant's four reference prompts, and 4 of 4 greedy chat replies of 64 tokens that match the reference's (equal to the end, or a first difference only at a near-tie).",
+  "The prepare step (python3 and numpy in the engine image, a few seconds) runs before each serve and writes a small GGUF that names the pack's arrays; the engine memory-maps the pack's files in place.",
+  "--jinja is not part of the measured configuration; it only applies the chat template for /v1/chat/completions. The judge scored its chat prompts with its own logits tool, not through /v1/chat/completions. The chat template has a thinking channel and sets a thinking effort of 0.9 unless it is given reasoning_effort; how /v1/chat/completions shows the thinking was not checked on this engine.",
+]

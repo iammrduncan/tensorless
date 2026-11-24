@@ -33,7 +33,7 @@ bool ggml_cuda_fattn_sm60_applicable(int device, const ggml_tensor * dst) {
     const ggml_tensor * V     = dst->src[2];
     const ggml_tensor * mask  = dst->src[3];
     const ggml_tensor * sinks = dst->src[4];
-    if (!Q || !K || !V || sinks) {
+    if (!Q || !K || !V || sinks || dst->src[6]) {
         return false;
     }
     if (Q->type != GGML_TYPE_F32 || K->type != GGML_TYPE_Q4_0 || V->type != GGML_TYPE_Q4_0 || dst->type != GGML_TYPE_F32) {

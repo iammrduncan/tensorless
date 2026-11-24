@@ -22,6 +22,7 @@ The launcher, the recipes, the container files, these docs and every change made
 | [llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant), TheTom | MIT, the same notice |
 | [llamAmpere](https://github.com/JakeATX/llamAmpere), JakeATX | MIT, the same notice |
 | [exllamav3](https://github.com/turboderp-org/exllamav3), turboderp (portions, for the EXL3 weight types) | MIT |
+| [LookAtMyQuant](https://github.com/ShinMegamiBoson/lookatmyquant), Shin Megami Boson (ports of its format readers, for the Inkling-2-Mini pack) | MIT |
 
 **Libraries vendored into the engine,** such as cpp-httplib, nlohmann/json and xxHash, each under its own license (MIT, BSD-2-Clause, public domain and others). **The launcher's one dependency,** [BurntSushi/toml](https://github.com/BurntSushi/toml), is MIT. **The CUDA libraries** in the engine images come from NVIDIA's CUDA base images, under the NVIDIA CUDA Toolkit license.
 

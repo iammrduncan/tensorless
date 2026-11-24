@@ -12,19 +12,19 @@ import (
 
 func spec(rt string) Spec {
 	return Spec{
-		Runtime:   rt,
-		Name:      "tensorless-iammrduncan-qwen3.8-27b-pn3-gguf",
-		Image:     "ghcr.io/x/engine@sha256:" + strings.Repeat("a", 64),
-		Host:      "127.0.0.1",
-		Port:      8080,
-		ModelPath: "/hub/models--o--r/blobs/" + strings.Repeat("b", 64),
-		ModelFile: "m.gguf",
-		Threads:   6,
-		Env:       map[string]string{"GGML_B": "2", "GGML_A": "1"},
-		Context:   65536,
-		Alias:     "iamMrDuncan/Qwen3.8-27B-PN3-GGUF",
-		Args:      []string{"-ngl", "99", "-fa", "on"},
-		GPU:       AllGPUs,
+		Runtime: rt,
+		Name:    "tensorless-iammrduncan-qwen3.8-27b-pn3-gguf",
+		Image:   "ghcr.io/x/engine@sha256:" + strings.Repeat("a", 64),
+		Host:    "127.0.0.1",
+		Port:    8080,
+		Mounts:  []Mount{{Host: "/hub/models--o--r/blobs/" + strings.Repeat("b", 64), Container: ModelFilePath("m.gguf")}},
+		Model:   ModelFilePath("m.gguf"),
+		Threads: 6,
+		Env:     map[string]string{"GGML_B": "2", "GGML_A": "1"},
+		Context: 65536,
+		Alias:   "iamMrDuncan/Qwen3.8-27B-PN3-GGUF",
+		Args:    []string{"-ngl", "99", "-fa", "on"},
+		GPU:     AllGPUs,
 	}
 }
 
@@ -68,6 +68,45 @@ func TestRunArgs(t *testing.T) {
 				t.Errorf("got\n%q\nwant\n%q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestRunArgsPack(t *testing.T) {
+	s := spec("podman")
+	s.Mounts = []Mount{{Host: "/hub/models--o--r", Container: PackRepo}, {Host: "/state/prepared/o--r/p100/x", Container: Prepared}}
+	s.Model = Prepared + "/inkling2.gguf"
+	got := strings.Join(s.RunArgs(), " ")
+	want := "-p 127.0.0.1:8080:8080 -v /hub/models--o--r:/models/repo:ro -v /state/prepared/o--r/p100/x:/models/prepared:ro -e OMP_NUM_THREADS=6"
+	if !strings.Contains(got, want) || !strings.Contains(got, " -m /models/prepared/inkling2.gguf --host 0.0.0.0 ") {
+		t.Errorf("run = %s", got)
+	}
+}
+
+func TestPrepareRunArgs(t *testing.T) {
+	rev := strings.Repeat("c", 40)
+	p := PrepareSpec{
+		Runtime: "podman", Image: "ghcr.io/x/engine@sha256:" + strings.Repeat("a", 64),
+		Command: []string{"python3", "-E", "-s", "/opt/tensorless/inkling-prepare/prepare.py"},
+		RepoDir: "/hub/models--o--r", OutDir: "/state/prepared/o--r/p100/x", Revision: rev,
+	}
+	want := []string{"run", "--rm", "--network", "none", "--security-opt", "label=disable",
+		"-v", "/hub/models--o--r:/models/repo:ro", "-v", "/state/prepared/o--r/p100/x:/models/prepared",
+		"--entrypoint", "python3", p.Image, "-E", "-s", "/opt/tensorless/inkling-prepare/prepare.py",
+		"/models/repo/snapshots/" + rev, "/models/prepared"}
+	if got := p.RunArgs(); !reflect.DeepEqual(got, want) {
+		t.Errorf("got\n%q\nwant\n%q", got, want)
+	}
+	// docker: no SELinux option, and never a GPU.
+	p.Runtime = "docker"
+	for _, a := range p.RunArgs() {
+		if a == "--security-opt" || a == "--gpus" || a == "--device" {
+			t.Errorf("docker prepare argv has %s", a)
+		}
+	}
+	// A one-word command has no arguments of its own.
+	p.Command = []string{"/opt/prepare"}
+	if got := p.RunArgs(); !reflect.DeepEqual(got[len(got)-4:], []string{"/opt/prepare", p.Image, "/models/repo/snapshots/" + rev, "/models/prepared"}) {
+		t.Errorf("got %q", got)
 	}
 }
 

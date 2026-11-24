@@ -41,9 +41,9 @@ Card
   driver   525.60.13 or newer
 
 Engine
-  release  engine-v0.3.0
+  release  engine-v0.4.0
   arch     sm60
-  image    ghcr.io/iammrduncan/tensorless-engine@sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e
+  image    ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997
 ```
 
 The output goes on with **Run** (the context, the arguments, the engine switches and the full container command) and **Receipt** (what was measured). Each part:
@@ -83,14 +83,14 @@ runtime:  podman
 
 # 1. pull the engine image, unless 'podman image inspect' finds it
 podman pull \
-    ghcr.io/iammrduncan/tensorless-engine@sha256:3423499a1676c557341bc7e959b65845b59cd791cc7b30e36f862c4c5528bd5e
+    ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997
 
 # 2. download the model (12.95 GB), resuming a partial download, and check its sha256 15ce2d4469673f1f1753c55de3780cfe04311dd6f05cb41633d73df128e91476
 GET https://huggingface.co/iamMrDuncan/Qwen3.8-27B-PN3-GGUF/resolve/c701b6690ec360b16d40f85df1cb76062e30cd38/Qwen3.8-27B-PN3-P0k19.gguf
     into /home/you/.cache/huggingface/hub/models--iamMrDuncan--Qwen3.8-27B-PN3-GGUF/blobs/15ce2d4469673f1f1753c55de3780cfe04311dd6f05cb41633d73df128e91476
 ```
 
-It goes on with the snapshot link, the full `podman run` command, and how it waits for the server. This example ran on a machine without the card, so `--card p100` chose the recipe. On a P100 host, leave `--card` out: the `gpu:` line then names the GPU that matched.
+It goes on with the snapshot link, the full `podman run` command, and how it waits for the server. For a model that is a pack of files, it lists a `GET` for each file still to download and, before the server's command, the prepare step's own `podman run`; the server's `-m` then shows as `'<the file the prepare step prints>'`, because that file is only known once the step has run. This example ran on a machine without the card, so `--card p100` chose the recipe. On a P100 host, leave `--card` out: the `gpu:` line then names the GPU that matched.
 
 A dry run still asks `nvidia-smi` for the GPU list, so it shows what would happen on this host. Without a GPU, `--dry-run` and `info` fall back to the model's only recipe; pass `--card p100` to choose it yourself.
 

@@ -364,6 +364,14 @@ llama_context::llama_context(
 
     cparams.n_ubatch = std::min(cparams.n_batch, params.n_ubatch == 0 ? params.n_batch : params.n_ubatch);
 
+    if (model.arch == LLM_ARCH_INKLING2_LOOP && !cparams.flash_attn && cparams.n_ubatch > 128) {
+        // without flash attention the dense relative-position bias and KQ keep the 32K compute buffers within one
+        // 16 GB card only with ubatches of at most 128 tokens; llama_decode splits larger batches (with flash
+        // attention the bias is indexed inside the kernel and nothing quadratic is materialized)
+        LLAMA_LOG_INFO("%s: inkling2_loop: n_ubatch %u -> 128\n", __func__, cparams.n_ubatch);
+        cparams.n_ubatch = 128;
+    }
+
     if (cparams.n_rs_seq > 0) {
         const uint32_t n_batch_min = cparams.n_rs_seq + 2;
         if (cparams.n_ctx < n_batch_min) {
@@ -523,7 +531,8 @@ llama_context::llama_context(
         llama_memory_params params_mem = {
             /*.type_k    =*/ params.type_k,
             /*.type_v    =*/ params.type_v,
-            /*.swa_full  =*/ params.swa_full,
+            // inkling2_loop: 40 sliding slots at full size would not fit one card at 32K; the window is exact anyway
+            /*.swa_full  =*/ params.swa_full && model.arch != LLM_ARCH_INKLING2_LOOP,
             /*.ctx_type  =*/ cparams.ctx_type,
             /*.mem_other =*/ llama_get_memory(cparams.ctx_other),
         };
@@ -3197,7 +3206,10 @@ void llama_context::output_reorder() {
 
 uint32_t llama_context::graph_max_nodes(uint32_t n_tokens) const {
     uint32_t res;
-    if (model.arch == LLM_ARCH_KIMI_K3) {
+    if (model.arch == LLM_ARCH_INKLING2_LOOP) {
+        // 48 layer visits of packed linears, rotations and chunked attention
+        res = 65536;
+    } else if (model.arch == LLM_ARCH_KIMI_K3) {
         // the n_tokens*40 budget below is exhausted at ubatch 3840
         res = std::max<uint32_t>(n_tokens * 160, 64u * model.n_tensors());
     } else if (model.arch == LLM_ARCH_HRM_TEXT) {

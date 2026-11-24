@@ -19,7 +19,7 @@ Each release has an archive for three platforms:
 | Platform | Archive | What it can do |
 |---|---|---|
 | Linux x86_64 | `linux-x86_64` | Everything: pull, serve and benchmark models. |
-| Linux aarch64 | `linux-aarch64` | The launcher runs, but the 0.3.0 engine image is published for `linux/amd64` only, so it cannot serve a model on an Arm host. |
+| Linux aarch64 | `linux-aarch64` | The launcher runs, but the 0.4.0 engine image is published for `linux/amd64` only, so it cannot serve a model on an Arm host. |
 | macOS, Apple silicon | `macos-arm64` | Read recipes and see exactly what would run: `models`, `info`, `capabilities` and `--dry-run`. A Mac has no NVIDIA GPU, so it serves no model. |
 
 Serving a model also needs an NVIDIA driver, podman or docker, and NVIDIA container support. [Prepare a Linux host for a P100](prepare-host.md) sets those up.
@@ -37,7 +37,7 @@ You need `curl` or `wget`, and `sha256sum` or `shasum`.
    It finds your platform, downloads that archive and its `.sha256` file from the [GitHub release](https://github.com/iammrduncan/tensorless/releases), checks the archive's sha256, and copies the one `tensorless` binary to `~/.local/bin`. It changes nothing else. You see:
 
    ```text
-   Downloading tensorless 0.3.0 for linux-x86_64
+   Downloading tensorless 0.4.0 for linux-x86_64
    Checked sha256 cb0c796fd83a334eb67f163fffb30016f51513f8f6ca4a30e7144875487415eb
    Installed /home/you/.local/bin/tensorless
    ```
@@ -55,7 +55,7 @@ Two environment variables change what the script does:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TENSORLESS_VERSION` | `0.3.0` | The release to install. |
+| `TENSORLESS_VERSION` | `0.4.0` | The release to install. |
 | `TENSORLESS_INSTALL_DIR` | `$HOME/.local/bin` | Where the binary goes. The script creates the directory if needed. |
 
 Set them for the `sh` that runs the script:
@@ -75,7 +75,7 @@ On any other platform, the script stops with `no release archive for` your syste
 1. Download the archive for your platform and its `.sha256` file. Set `P` to `linux-x86_64`, `linux-aarch64` or `macos-arm64`:
 
    ```sh
-   V=0.3.0
+   V=0.4.0
    P=linux-x86_64
    curl -fLO https://github.com/iammrduncan/tensorless/releases/download/v$V/tensorless-$V-$P.tar.gz
    curl -fLO https://github.com/iammrduncan/tensorless/releases/download/v$V/tensorless-$V-$P.tar.gz.sha256
@@ -89,7 +89,7 @@ On any other platform, the script stops with `no release archive for` your syste
 
    On macOS, use `shasum -a 256 -c` in place of `sha256sum -c`. The check prints the archive's name followed by `OK`.
 
-3. The archive's folder, `tensorless-0.3.0-linux-x86_64/`, holds the `tensorless` binary with `LICENSE`, `LICENSES/`, `NOTICE`, `THIRD_PARTY_NOTICES.md` and `README.md`. Put the binary on your `PATH`:
+3. The archive's folder, `tensorless-0.4.0-linux-x86_64/`, holds the `tensorless` binary with `LICENSE`, `LICENSES/`, `NOTICE`, `THIRD_PARTY_NOTICES.md` and `README.md`. Put the binary on your `PATH`:
 
    ```sh
    mkdir -p ~/.local/bin
@@ -106,13 +106,14 @@ tensorless version
 tensorless 0.3.0 (commit 011abeee0b9277141d5100d145ce479c151d37be), linux/amd64
 ```
 
-`tensorless models` lists the launch targets this launcher knows. On a machine without an NVIDIA GPU, it cannot tell whether they fit:
+`tensorless models` lists the recipes this launcher knows: the launch targets, and a draft. On a machine without an NVIDIA GPU, it cannot tell whether they fit:
 
 ```text
-MODEL                                            CARD  STATUS    ENGINE         FITS     CACHED
-iamMrDuncan/Qwen3.8-27B-PN3-GGUF                 p100  released  engine-v0.3.0  unknown  no
-iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF  p100  released  engine-v0.3.0  unknown  no
-unsloth/North-Mini-Code-1.0-GGUF                 p100  released  engine-v0.3.0  unknown  no
+MODEL                                                CARD  STATUS    ENGINE         FITS     CACHED
+iamMrDuncan/Qwen3.8-27B-PN3-GGUF                     p100  released  engine-v0.4.0  unknown  no
+iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF      p100  released  engine-v0.4.0  unknown  no
+shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB  p100  draft     engine-v0.4.0  unknown  no
+unsloth/North-Mini-Code-1.0-GGUF                     p100  released  engine-v0.4.0  unknown  no
 fits is unknown: nvidia-smi not found
 ```
 

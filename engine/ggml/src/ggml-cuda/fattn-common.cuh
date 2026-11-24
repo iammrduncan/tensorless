@@ -19,6 +19,17 @@
 // The macro on the following line shifts it by a factor of 2**3=8, as was needed to fix https://github.com/ggml-org/llama.cpp/issues/18606 .
 #define FATTN_KQ_MAX_OFFSET (3.0f*0.6931f)
 
+// Indexed attention bias (ggml_flash_attn_ext_add_indexed_bias): before the softmax, KQ[key, query] of head h gains
+// table[idx[query*s_idx + key] + h*s_head + query*s_q], query flattened over streams. Strides in elements.
+// table == nullptr: no bias. Only the TILE kernel reads it (ggml_cuda_get_best_fattn_kernel routes there).
+struct fattn_ibias {
+    const float * table;
+    const int   * idx;
+    int32_t       s_head;
+    int32_t       s_q;
+    int32_t       s_idx;
+};
+
 typedef void (* fattn_kernel_t)(
         const char * __restrict__ Q,
         const char * __restrict__ K,
@@ -40,7 +51,8 @@ typedef void (* fattn_kernel_t)(
                             const int32_t nb11, const int32_t nb12, const int64_t nb13,
                             const int32_t nb21, const int32_t nb22, const int64_t nb23,
                             const int32_t ne31, const int32_t ne32, const int32_t ne33,
-                            const int32_t nb31, const int32_t nb32, const int64_t nb33);
+                            const int32_t nb31, const int32_t nb32, const int64_t nb33,
+        const fattn_ibias ibias);
 
 typedef float (*vec_dot_KQ_t)(
     const char * __restrict__ K_c, const void * __restrict__ Q_v, const int * __restrict__ Q_q8 , const void * __restrict__ Q_ds);
@@ -1384,6 +1396,19 @@ void launch_fattn(
     const ggml_tensor * mask  = dst->src[3];
     const ggml_tensor * sinks = dst->src[4];
 
+    fattn_ibias ibias = { nullptr, nullptr, 0, 0, 0 };
+    if (dst->src[6] != nullptr) {
+        const ggml_tensor * table = dst->src[6];
+        const ggml_tensor * idx   = dst->src[7];
+        GGML_ASSERT(table->type == GGML_TYPE_F32 && idx->type == GGML_TYPE_I32);
+        GGML_ASSERT(ggml_is_contiguous(table) && ggml_is_contiguous(idx));
+        ibias.table  = (const float *) table->data;
+        ibias.idx    = (const int   *) idx->data;
+        ibias.s_head = table->nb[1] / sizeof(float);
+        ibias.s_q    = table->nb[2] / sizeof(float);
+        ibias.s_idx  = idx->nb[1]   / sizeof(int);
+    }
+
     ggml_tensor * KQV = dst;
 
     GGML_ASSERT(Q->type == GGML_TYPE_F32);
@@ -1705,7 +1730,8 @@ void launch_fattn(
         K->ne[0], n_kv, K->ne[2], K->ne[3], nb11, nb12, nb13,
         nb21, nb22, nb23,
         mask ? mask->ne[1] : 0, mask ? mask->ne[2] : 0, mask ? mask->ne[3] : 0,
-        mask ? mask->nb[1] : 0, mask ? mask->nb[2] : 0, mask ? mask->nb[3] : 0
+        mask ? mask->nb[1] : 0, mask ? mask->nb[2] : 0, mask ? mask->nb[3] : 0,
+        ibias
     );
     CUDA_CHECK(cudaGetLastError());
 

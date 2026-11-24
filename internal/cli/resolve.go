@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -319,15 +320,74 @@ func (a *App) downloader() *hfcache.Downloader {
 	}
 }
 
-func modelFile(r *recipe.Recipe) hfcache.File {
-	return hfcache.File{
-		Repo:     r.Model.HFRepo,
-		Revision: r.Model.Revision,
-		Path:     r.Model.File,
-		SHA256:   r.Model.SHA256,
-		Size:     r.Model.SizeBytes,
+// modelFiles are the model's files in the cache: its one file, or every file
+// of its pack.
+func modelFiles(r *recipe.Recipe) []hfcache.File {
+	var out []hfcache.File
+	for _, f := range r.Files() {
+		out = append(out, hfcache.File{
+			Repo:     r.Model.HFRepo,
+			Revision: r.Model.Revision,
+			Path:     f.Name,
+			SHA256:   f.SHA256,
+			Size:     f.SizeBytes,
+		})
 	}
+	return out
 }
+
+// blobPaths are where the files' content is in the cache.
+func blobPaths(cache string, files []hfcache.File) []string {
+	out := make([]string, len(files))
+	for i, f := range files {
+		out[i] = hfcache.BlobPath(cache, f)
+	}
+	return out
+}
+
+// cacheStatus is yes when every file is cached, partial when some of them
+// are or were begun, else no.
+func cacheStatus(cache string, files []hfcache.File) string {
+	yes, begun := 0, false
+	for _, f := range files {
+		switch hfcache.Status(cache, f) {
+		case "yes":
+			yes++
+			begun = true
+		case "partial":
+			begun = true
+		}
+	}
+	switch {
+	case yes == len(files):
+		return "yes"
+	case begun:
+		return "partial"
+	}
+	return "no"
+}
+
+// preparedDir is the host folder a pack's prepare step writes to: in the
+// state directory, one per recipe, revision and image.
+func (a *App) preparedDir(r *recipe.Recipe) (string, error) {
+	state := a.stateDir()
+	if state == "" {
+		return "", errors.New("cannot find your home directory for the launcher's state, where a pack is prepared; set XDG_STATE_HOME")
+	}
+	key := short(r.Model.Revision) + "-" + short(r.ImageDigest())
+	return filepath.Abs(filepath.Join(state, "prepared", strings.ReplaceAll(r.Repo(), "/", "--"), r.Card.ID, key))
+}
+
+func short(s string) string {
+	if len(s) > 12 {
+		return s[:12]
+	}
+	return s
+}
+
+// preparedPending stands for the prepared file in the server's -m until the
+// prepare step has printed it.
+const preparedPending = "<the file the prepare step prints>"
 
 func (a *App) threads(r *recipe.Recipe) int {
 	n := a.NumCPU()
@@ -337,31 +397,61 @@ func (a *App) threads(r *recipe.Recipe) int {
 	return min(n, r.Run.ThreadsMax)
 }
 
-// spec is the container to start for t.
-func (a *App) spec(t *target, o *options, rt, blob string) (container.Spec, error) {
-	if strings.Contains(blob, ":") {
-		return container.Spec{}, fmt.Errorf("the model path %s contains ':', which the container mount cannot express; pass --cache DIR with a path without ':'", blob)
-	}
-	ctxLen := t.r.Run.Context
+// launch is everything a serve of t starts: the server container, the model
+// files it needs in the cache, and for a pack, the prepare step that runs
+// first.
+type launch struct {
+	files   []hfcache.File
+	blobs   []string
+	spec    container.Spec
+	prepare *container.PrepareSpec // nil for a one-file model
+}
+
+// launch works out the containers for t. For a pack, spec.Model is
+// preparedPending until the prepare step has run.
+func (a *App) launch(t *target, o *options, rt, cache string) (*launch, error) {
+	r := t.r
+	l := &launch{files: modelFiles(r)}
+	l.blobs = blobPaths(cache, l.files)
+	ctxLen := r.Run.Context
 	if o.context > 0 {
 		ctxLen = o.context
 	}
-	return container.Spec{
-		Runtime:   rt,
-		Name:      container.Name(t.r.Repo()),
-		Image:     t.r.Engine.Image,
-		Host:      o.host,
-		Port:      o.port,
-		ModelPath: blob,
-		ModelFile: filepath.Base(filepath.FromSlash(t.r.Model.File)),
-		Threads:   a.threads(t.r),
-		Env:       t.r.Run.Env,
-		Context:   ctxLen,
-		Alias:     t.r.Run.Alias,
-		Args:      t.r.Run.Args,
-		Extra:     o.extra,
-		GPU:       t.device,
-	}, nil
+	l.spec = container.Spec{
+		Runtime: rt,
+		Name:    container.Name(r.Repo()),
+		Image:   r.Engine.Image,
+		Host:    o.host,
+		Port:    o.port,
+		Threads: a.threads(r),
+		Env:     r.Run.Env,
+		Context: ctxLen,
+		Alias:   r.Run.Alias,
+		Args:    r.Run.Args,
+		Extra:   o.extra,
+		GPU:     t.device,
+	}
+	if !r.IsPack() {
+		in := container.ModelFilePath(path.Base(r.Model.File))
+		l.spec.Mounts = []container.Mount{{Host: l.blobs[0], Container: in}}
+		l.spec.Model = in
+	} else {
+		repoDir := hfcache.RepoDir(cache, r.Repo())
+		out, err := a.preparedDir(r)
+		if err != nil {
+			return nil, err
+		}
+		l.spec.Mounts = []container.Mount{{Host: repoDir, Container: container.PackRepo}, {Host: out, Container: container.Prepared}}
+		l.spec.Model = preparedPending
+		l.prepare = &container.PrepareSpec{Runtime: rt, Image: r.Engine.Image, Command: r.Model.Pack.Prepare,
+			RepoDir: repoDir, OutDir: out, Revision: r.Model.Revision}
+	}
+	for _, m := range l.spec.Mounts {
+		if strings.Contains(m.Host, ":") {
+			return nil, fmt.Errorf("the path %s contains ':', which the container mount cannot express; pass --cache DIR (or set XDG_STATE_HOME) to a path without ':'", m.Host)
+		}
+	}
+	return l, nil
 }
 
 // untuned describes how the command line changes the measured configuration,

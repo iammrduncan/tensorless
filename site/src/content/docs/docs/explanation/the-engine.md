@@ -14,7 +14,7 @@ The tensorless engine is a fork of llama.cpp, several forks deep, with kernels w
 flowchart LR
     A["llama.cpp / ggml<br/>ggml-org"] --> B["llama-cpp-turboquant<br/>TheTom"]
     B --> C["llamAmpere<br/>JakeATX, 2cb16936"]
-    C --> D["tensorless engine<br/>engine-v0.3.0"]
+    C --> D["tensorless engine<br/>engine-v0.4.0"]
 ```
 
 - **[llama.cpp](https://github.com/ggml-org/llama.cpp)** is the foundation: the GGUF format, the quantization types, `llama-server` and the CUDA backend.
@@ -25,19 +25,21 @@ All three are MIT-licensed, and their notices travel with the engine. tensorless
 
 ## What the fork adds
 
-Compared with its upstream base, the engine at engine-v0.2.0 changed 64 files, and engine-v0.3.0 changes 18 more from there. The main additions, listed in [`engine/PROVENANCE.md`](https://github.com/iammrduncan/tensorless/blob/main/engine/PROVENANCE.md):
+Compared with its upstream base, the engine at engine-v0.2.0 changed 64 files, engine-v0.3.0 changed 18 more from there, and engine-v0.4.0 changes 41 more, 17 of them new. The main additions, listed in [`engine/PROVENANCE.md`](https://github.com/iammrduncan/tensorless/blob/main/engine/PROVENANCE.md):
 
 - **P100 decode kernels.** Split-KV flash-decoding attention over a q4_0 KV cache, quantized GEMVs for `sm_60` (including an IQ3_XXS kernel that decodes through an fp16 table), Q3_K, Q4_K and Q6_K kernels, an output-head kernel, prefill dequantization and chunked GEMM, and fused norms.
 - **The PN weight types,** `pn3t` and `pn4t`, with a CPU reference decoder, CUDA dequantization and `sm_60` GEMV kernels. See [Why a P100-native weight format](pn-format.md).
 - **The PN prefill path,** new in engine-v0.2.0: GEMM kernels for a prompt's batched products of PN weights, in place of dequantize-to-fp32 plus cuBLAS SGEMM. See [The prefill climb](#the-prefill-climb).
 - **Decode paths for North-Mini-Code-1.0,** new in engine-v0.3.0: one-token attention over a q8_0 KV cache, Q6_K, IQ2_S and IQ3_S GEMVs for its attention and its experts, and fusions for its mixture-of-experts layers. See [The North-Mini-Code climb](#the-north-mini-code-climb).
+- **Inkling-2-Mini, read in place,** new in engine-v0.4.0: Thinking Machines' Inkling-2-Mini (`inkling2_loop`) from LookAtMyQuant's pack of 63 files, with the pack's trellis, Lloyd-Max and NVFP4 decoders for the CPU and for `sm_60`, flash attention with an indexed relative-position bias, and a prepare step that writes a small GGUF naming the pack's arrays. See [The Inkling-2-Mini campaign](#the-inkling-2-mini-campaign).
+- **A host sync schedule,** new in engine-v0.4.0: `GGML_CUDA_SYNC_SCHED` sets how the host waits for the GPU. Its default, `blocking`, differs from engine-v0.3.0's driver default, `auto`, which the released recipes keep ([Engine switches](../reference/engine-switches.md#the-host-sync-schedule)).
 - **Tools for checking it:** a teacher-forced logits tool and golden tests for the PN format.
 
 The P100 kernels for standard weight types are opt-in. An environment variable such as `GGML_CUDA_FATTN_SM60=1` switches one on, and the recipe sets exactly the switches that were measured. The PN kernels, the prefill path included, run whenever a tensor is `pn3t` or `pn4t`, North-Mini-Code-1.0's decode paths are on by default, and a few exact changes, such as the IQ2 shared-memory codebook, are on by default on sm_60. The [engine switches reference](../reference/engine-switches.md) lists them.
 
 ## Tuned by automated hill climbs
 
-Most of the engine's speed came from **hill climbs**: long runs in which AI agents proposed changes to the engine, and a judge measured each one and kept it only if it was faster and still correct. On Qwen3.8-27B-PN3, the first climb made decode faster and produced engine-v0.1.0. The second started from that release, made prefill faster, and produced engine-v0.2.0. The third started from engine-v0.2.0, made North-Mini-Code-1.0's decode faster, and produced engine-v0.3.0.
+Most of the engine's speed came from **hill climbs**: long runs in which AI agents proposed changes to the engine, and a judge measured each one and kept it only if it was faster and still correct. On Qwen3.8-27B-PN3, the first climb made decode faster and produced engine-v0.1.0. The second started from that release, made prefill faster, and produced engine-v0.2.0. The third started from engine-v0.2.0, made North-Mini-Code-1.0's decode faster, and produced engine-v0.3.0. A fourth campaign, not a climb but a goal campaign, started from engine-v0.3.0 and made the engine run a new model, Inkling-2-Mini: engine-v0.4.0.
 
 All three ran on [Thermite](https://usethermite.com), an open-source autoresearch harness ([source](https://github.com/iammrduncan/thermite)). Thermite's central idea is that the agents do not decide what counts as better:
 
@@ -91,6 +93,21 @@ North-Mini-Code-1.0 is a mixture-of-experts model: each token runs 8 of its 128 
 
 Decode is 256 greedy tokens after a cold code prompt, on one P100. The gains came from attention for one token over the q8_0 KV cache, from merging the Q, K and V projections into one GEMV with the router's in the same launch, from leaner IQ2_S and IQ3_S GEMVs for the experts, and from fusing the mixture-of-experts tail and the RoPE step. This climb's guards were its own: mean KL divergence to the starting point's output at most 0.003 nat, the same top token at 98% or more of positions, and no greedy reply changed.
 
+### The Inkling-2-Mini campaign
+
+A goal campaign works toward a set of goals instead of one number. This one had seven, all met by its champion 7 on one P100: read LookAtMyQuant's Inkling-2-Mini pack losslessly; load it with a 32K context on the card; match the pack's own float32 reference in prefill and in greedy decode; and three speeds.
+
+| | |
+|---|---:|
+| Mean KL divergence to the float32 reference, LookAtMyQuant's four prompts | 1.09e-4 |
+| Same top token as the reference | 99.67% of positions |
+| Greedy chat replies matching the reference's | 4 of 4 |
+| Decode after a 512- / 32,000-token prompt | 28.52 / 25.45 tok/s |
+| Prefill, a cold 4,096-token prompt | 239.89 tok/s |
+| Peak card memory at a 32,768-token context | 14,151 MiB |
+
+These are the research build's numbers. The published image has not been measured with this model yet, so its recipe is a draft in v0.4.0 ([Launch targets](../reference/launch-targets.md#draft-in-v040-inkling-2-mini)).
+
 ### What the guards held
 
 Speed alone is easy to fake: skip work, lose precision, return the wrong token faster. So every step of both Qwen3.8-27B climbs was held to these bars, against that climb's starting point:
@@ -103,7 +120,7 @@ The [receipts](../reference/receipts.md) have the full measurements.
 
 ### What a climb does not guarantee
 
-A hill climb finds changes that help the case it measures. The decode climb measured decode at short context, and the prefill climb measured a prompt of about 4,100 tokens. Neither re-measured Qwen3.8-27B-PN3 at 32K and 65K contexts, where attention costs more of each token, so those numbers are still open ([Known limits](../project/known-limits.md)). Each climb also held the numerics against its own starting point, so the model's quality checks are the release gate's to repeat, and that is still outstanding too. And a judge only sees the requests it sends: the prefill climb's judge never sent a follow-up request on a cached prompt, and its champion aborted on one. A run of the engine before the release found it, and engine-v0.2.0 has the fix ([Receipts](../reference/receipts.md#a-fault-found-before-engine-v020s-release)). The North-Mini-Code climb's champion could not load without a GPU, which its judge never tried; engine-v0.3.0 has that fix too. See [How a release is made](releases-and-receipts.md).
+A hill climb finds changes that help the case it measures. The decode climb measured decode at short context, and the prefill climb measured a prompt of about 4,100 tokens. Neither re-measured Qwen3.8-27B-PN3 at 32K and 65K contexts, where attention costs more of each token, so those numbers are still open ([Known limits](../project/known-limits.md)). Each climb also held the numerics against its own starting point, so the model's quality checks are the release gate's to repeat, and that is still outstanding too. And a judge only sees the requests it sends: the prefill climb's judge never sent a follow-up request on a cached prompt, and its champion aborted on one. A run of the engine before the release found it, and engine-v0.2.0 has the fix ([Receipts](../reference/receipts.md#a-fault-found-before-engine-v020s-release)). The North-Mini-Code climb's champion could not load without a GPU, which its judge never tried; engine-v0.3.0 has that fix too. The Inkling-2-Mini campaign changed how the host waits for the GPU for every model, which no judge of the other models measured; engine-v0.4.0's gate found it cost Qwen3.8-27B-PN3 about 1%, and the released recipes keep engine-v0.3.0's setting. See [How a release is made](releases-and-receipts.md).
 
 ## Earlier work
 
