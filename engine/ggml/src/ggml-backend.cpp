@@ -1074,6 +1074,19 @@ struct ggml_backend_sched {
     int debug_realloc;
     int debug_graph_size;
     int debug_prev_graph_size;
+
+    // staged split inputs: host-side inputs of a split on an async backend are copied into one pinned
+    // staging buffer per backend and uploaded with set_tensor_async on that backend's own stream, instead
+    // of a backend synchronize plus a synchronous tensor copy per input (GGML_SCHED_STAGE_INPUTS=0: off)
+    struct {
+        ggml_backend_buffer_t buf;
+        ggml_backend_event_t  ev;
+        size_t                used;
+        int64_t               call;    // compute_splits call that last used the buffer
+        bool                  pending; // ev was recorded after the last uploads
+        bool                  failed;  // no pinned host buffer type or no events: never stage
+    } stage[GGML_SCHED_MAX_BACKENDS];
+    int64_t stage_call;
 };
 
 #define hash_id(tensor) ggml_hash_find_or_insert(&sched->hash_set, tensor)
@@ -1876,8 +1889,83 @@ static bool ggml_backend_sched_alloc_splits(ggml_backend_sched_t sched) {
     return true;
 }
 
+static bool ggml_backend_sched_stage_enabled() {
+    static const bool on = [] {
+        const char * e = getenv("GGML_SCHED_STAGE_INPUTS");
+        return !(e && e[0] == '0');
+    }();
+    return on;
+}
+
+// upload one host-resident split input to the split backend without a synchronize: the bytes are
+// copied into the backend's pinned staging buffer (so the caller may overwrite its own copy at once)
+// and queued with set_tensor_async on the backend stream, ahead of the split's graph. The staging
+// buffer is reused only after the event recorded behind the previous call's uploads has completed.
+static bool ggml_backend_sched_stage_input(ggml_backend_sched_t sched, int backend_id,
+        struct ggml_tensor * input, struct ggml_tensor * input_cpy) {
+    static const size_t stage_size = 4u << 20;
+
+    ggml_backend_t backend = sched->backends[backend_id];
+    auto & st = sched->stage[backend_id];
+    const size_t n = ggml_nbytes(input);
+
+    if (st.failed || n == 0 || n > stage_size / 4 || backend->iface.set_tensor_async == NULL) {
+        return false;
+    }
+    if (input->buffer == NULL || !ggml_backend_buffer_is_host(input->buffer) || input->data == NULL ||
+        ggml_backend_buffer_get_usage(input->buffer) == GGML_BACKEND_BUFFER_USAGE_WEIGHTS) {
+        return false;
+    }
+    ggml_backend_buffer_t dst_buf = input_cpy->view_src ? input_cpy->view_src->buffer : input_cpy->buffer;
+    if (dst_buf == NULL || ggml_backend_buffer_is_host(dst_buf) || !ggml_is_contiguous(input) ||
+        !ggml_is_contiguous(input_cpy) || ggml_nbytes(input_cpy) != n) {
+        return false;
+    }
+    if (st.buf == NULL) {
+        ggml_backend_dev_t dev = ggml_backend_get_device(backend);
+        ggml_backend_buffer_type_t buft = dev ? ggml_backend_dev_host_buffer_type(dev) : NULL;
+        if (buft != NULL) {
+            st.ev  = ggml_backend_event_new(dev);
+            st.buf = st.ev ? ggml_backend_buft_alloc_buffer(buft, stage_size) : NULL;
+        }
+        if (st.buf == NULL || !ggml_backend_buffer_is_host(st.buf)) {
+            if (st.buf) { ggml_backend_buffer_free(st.buf); st.buf = NULL; }
+            if (st.ev)  { ggml_backend_event_free(st.ev);   st.ev  = NULL; }
+            st.failed = true;
+            return false;
+        }
+    }
+    if (st.call != sched->stage_call) {
+        // first upload of this call: the previous call's uploads must have left the staging buffer
+        if (st.pending) {
+            ggml_backend_event_synchronize(st.ev);
+            st.pending = false;
+        }
+        st.used = 0;
+        st.call = sched->stage_call;
+    }
+    const size_t off = GGML_PAD(st.used, 256);
+    if (off + n > ggml_backend_buffer_get_size(st.buf)) {
+        return false;
+    }
+    if (!(input->flags & GGML_TENSOR_FLAG_INPUT)) {
+        // produced by another (host) backend's split: let it finish first
+        ggml_backend_t input_backend = ggml_backend_sched_get_tensor_backend(sched, input);
+        if (input_backend) {
+            ggml_backend_synchronize(input_backend);
+        }
+    }
+    char * dst = (char *) ggml_backend_buffer_get_base(st.buf) + off;
+    memcpy(dst, input->data, n);
+    backend->iface.set_tensor_async(backend, input_cpy, dst, 0, n);
+    st.used = off + n;
+    return true;
+}
+
 static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t sched) {
     GGML_ASSERT(sched);
+    const bool stage_on = ggml_backend_sched_stage_enabled();
+    sched->stage_call++;
     struct ggml_backend_sched_split * splits = sched->splits;
 
     struct moe_cache_scope {
@@ -1939,6 +2027,12 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                 // split->inputs holds exactly the tensors that live on another backend than this split,
                 // so every entry here is a real recurring transfer (never the initial model load).
                 exl3_res_copy(input_backend, split_backend, ggml_nbytes(input));
+            }
+
+            if (stage_on && ggml_backend_sched_stage_input(sched, split_backend_id, input, input_cpy)) {
+                // copied into pinned staging: the source may be overwritten from here on, and the upload is
+                // ordered before this split's graph on the split backend's stream
+                continue;
             }
 
             if (input->flags & GGML_TENSOR_FLAG_INPUT) {
@@ -2060,6 +2154,11 @@ static enum ggml_status ggml_backend_sched_compute_splits(ggml_backend_sched_t s
                     }
                 }
             }
+        }
+
+        if (sched->stage[split_backend_id].call == sched->stage_call && sched->stage[split_backend_id].ev) {
+            ggml_backend_event_record(sched->stage[split_backend_id].ev, split_backend);
+            sched->stage[split_backend_id].pending = true;
         }
 
         if (exl3_residency().on && split->graph.n_nodes > 0) {
@@ -2266,6 +2365,15 @@ void ggml_backend_sched_free(ggml_backend_sched_t sched) {
     for (int b = 0; b < sched->n_backends; b++) {
         for (int c = 0; c < sched->n_copies; c++) {
             ggml_backend_event_free(sched->events[b][c]);
+        }
+        if (sched->stage[b].ev) {
+            if (sched->stage[b].pending) {
+                ggml_backend_event_synchronize(sched->stage[b].ev);
+            }
+            ggml_backend_event_free(sched->stage[b].ev);
+        }
+        if (sched->stage[b].buf) {
+            ggml_backend_buffer_free(sched->stage[b].buf);
         }
     }
     ggml_gallocr_free(sched->galloc);

@@ -2160,6 +2160,29 @@ void llama_kv_cache::set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch 
     }
 }
 
+// Inkling-2 relative-position index of each (cell, token): the distance when 0 <= d < extent, else extent
+// (the zero row of the bias table); empty cells are masked anyway
+void llama_kv_cache::set_input_rel_pos(ggml_tensor * dst, const llama_ubatch * ubatch, int32_t extent) const {
+    GGML_ASSERT(n_stream == 1 && "TODO: support multiple streams");
+    GGML_ASSERT(ggml_backend_buffer_is_host(dst->buffer));
+    const auto & cells = v_cells[0];
+    int32_t * data = (int32_t *) dst->data;
+    const int64_t n_kv = dst->ne[0];
+    const int64_t n_tokens = ubatch->n_tokens;
+    for (int64_t i = 0; i < n_tokens; ++i) {
+        for (int64_t j = 0; j < n_kv; ++j) {
+            int32_t v = extent;
+            if (!cells.is_empty(j)) {
+                const int64_t d = (int64_t) ubatch->pos[i] - cells.pos_get(j);
+                if (d >= 0 && d < extent) {
+                    v = (int32_t) d;
+                }
+            }
+            data[i*n_kv + j] = v;
+        }
+    }
+}
+
 void llama_kv_cache::set_input_k_rot(ggml_tensor * dst) const {
     if (!dst) {
         // rotation disabled for this cache (attn_rot_k == false): the graph
@@ -3195,6 +3218,10 @@ void llama_kv_cache_context::set_input_kq_mask(ggml_tensor * dst, const llama_ub
 
 void llama_kv_cache_context::set_input_pos_bucket(ggml_tensor * dst, const llama_ubatch * ubatch) const {
     kv->set_input_pos_bucket(dst, ubatch);
+}
+
+void llama_kv_cache_context::set_input_rel_pos(ggml_tensor * dst, const llama_ubatch * ubatch, int32_t extent) const {
+    kv->set_input_rel_pos(dst, ubatch, extent);
 }
 
 void llama_kv_cache_context::set_input_k_rot(ggml_tensor * dst) const {

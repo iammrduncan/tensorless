@@ -1237,6 +1237,10 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "DSV4_HC_COMB",
     "DSV4_HC_PRE",
     "DSV4_HC_POST",
+    "INK2_MUL_MAT",
+    "INK2_REL_BIAS",
+    "INK2_RHT",
+    "INK2_GLUE",
 
     "UNARY",
 
@@ -1254,7 +1258,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "GLU",
 };
 
-static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
+static_assert(GGML_OP_COUNT == 106, "GGML_OP_COUNT != 106");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1353,6 +1357,10 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "dsv4_hc_comb(mixes, scale, base)",
     "dsv4_hc_pre(x, weights)",
     "dsv4_hc_post(x, residual, post, comb)",
+    "ink2_mul_mat(codes, x)",
+    "ink2_rel_bias(kq, table, idx)",
+    "ink2_rht(x)",
+    "ink2_glue(x)",
 
     "unary(x)",
 
@@ -1370,7 +1378,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "glu(x)",
 };
 
-static_assert(GGML_OP_COUNT == 102, "GGML_OP_COUNT != 102");
+static_assert(GGML_OP_COUNT == 106, "GGML_OP_COUNT != 106");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -5746,6 +5754,33 @@ void ggml_flash_attn_ext_add_sinks(
     a->src[4] = sinks;
 }
 
+bool ggml_flash_attn_ext_has_indexed_bias(const struct ggml_tensor * a) {
+    GGML_ASSERT(a->op == GGML_OP_FLASH_ATTN_EXT);
+    return a->src[6] != NULL;
+}
+
+void ggml_flash_attn_ext_add_indexed_bias(
+        struct ggml_tensor * a,
+        struct ggml_tensor * table,
+        struct ggml_tensor * indices) {
+    GGML_ASSERT(a->op == GGML_OP_FLASH_ATTN_EXT);
+    GGML_ASSERT((table == NULL) == (indices == NULL));
+    a->src[6] = table;
+    a->src[7] = indices;
+    if (!table) {
+        return;
+    }
+
+    const struct ggml_tensor * q    = a->src[0];
+    const struct ggml_tensor * mask = a->src[3];
+    GGML_ASSERT(mask && mask->ne[0] == a->src[1]->ne[1] && mask->ne[1] >= q->ne[1]);
+    GGML_ASSERT(mask->ne[2] == 1 && mask->ne[3] == q->ne[3]);
+    GGML_ASSERT(table->type == GGML_TYPE_F32 && ggml_is_contiguous(table));
+    GGML_ASSERT(table->ne[1] == q->ne[2] && table->ne[0] > 0 && table->ne[2] == q->ne[1]*q->ne[3] && table->ne[3] == 1);
+    GGML_ASSERT(indices->type == GGML_TYPE_I32 && ggml_is_contiguous(indices) && ggml_is_matrix(indices));
+    GGML_ASSERT(indices->ne[0] == mask->ne[0] && indices->ne[1] == table->ne[2]);
+}
+
 // ggml_flash_attn_back
 
 struct ggml_tensor * ggml_flash_attn_back(
@@ -6595,6 +6630,208 @@ struct ggml_tensor * ggml_gated_delta_net(
 }
 
 // ggml_turbo_wht
+
+struct ggml_tensor * ggml_ink2_mul_mat(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * codes,
+        struct ggml_tensor  * scales,
+        struct ggml_tensor  * table,
+        struct ggml_tensor  * aux,
+        struct ggml_tensor  * x,
+        struct ggml_tensor  * ids,
+        struct ggml_tensor  * map,
+        int                   fmt,
+        int                   n_rows) {
+    GGML_ASSERT(x->type == GGML_TYPE_F32);
+    GGML_ASSERT(x->nb[0] == sizeof(float) && x->nb[1] == x->ne[0]*sizeof(float));
+    GGML_ASSERT(fmt >= 0 && fmt <= 9);
+    struct ggml_tensor * result;
+    if (ids) {
+        GGML_ASSERT(map && ids->type == GGML_TYPE_I32 && map->type == GGML_TYPE_I16);
+        GGML_ASSERT(ggml_is_contiguous(x) && ggml_is_contiguous(ids));
+        GGML_ASSERT(x->ne[2] == ids->ne[1] && (x->ne[1] == 1 || x->ne[1] == ids->ne[0]));
+        result = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_rows, ids->ne[0], ids->ne[1]);
+    } else {
+        GGML_ASSERT(ggml_is_contiguous(x));
+        result = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_rows, ggml_nelements(x)/x->ne[0]);
+    }
+    int32_t params[3] = { fmt, n_rows, (int32_t) x->ne[0] };
+    memcpy(result->op_params, params, sizeof(params));
+    result->op     = GGML_OP_INK2_MUL_MAT;
+    result->src[0] = codes;
+    result->src[1] = scales;
+    result->src[2] = table;
+    result->src[3] = aux;
+    result->src[4] = x;
+    result->src[5] = ids;
+    result->src[6] = map;
+    return result;
+}
+
+struct ggml_tensor * ggml_ink2_mul_mat_rows(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * codes,
+        struct ggml_tensor  * scales,
+        struct ggml_tensor  * table,
+        struct ggml_tensor  * x,
+        struct ggml_tensor  * row_map,
+        struct ggml_tensor  * base,
+        int                   fmt,
+        int                   n_rows,
+        int                   n_total) {
+    GGML_ASSERT(x->type == GGML_TYPE_F32 && ggml_is_contiguous(x));
+    GGML_ASSERT(row_map && row_map->type == GGML_TYPE_I32 && ggml_nelements(row_map) >= n_rows);
+    const int64_t N = ggml_nelements(x)/x->ne[0];
+    struct ggml_tensor * result;
+    if (base) {
+        GGML_ASSERT(base->type == GGML_TYPE_F32 && base->ne[0] == n_total && base->ne[1] == N && ggml_is_contiguous(base));
+        result = ggml_view_tensor(ctx, base);
+    } else {
+        result = ggml_new_tensor_2d(ctx, GGML_TYPE_F32, n_total, N);
+    }
+    int32_t params[3] = { fmt, n_rows, (int32_t) x->ne[0] };
+    memcpy(result->op_params, params, sizeof(params));
+    result->op     = GGML_OP_INK2_MUL_MAT;
+    result->src[0] = codes;
+    result->src[1] = scales;
+    result->src[2] = table;
+    result->src[4] = x;
+    result->src[7] = row_map;
+    result->src[8] = base;
+    return result;
+}
+
+struct ggml_tensor * ggml_ink2_mul_mat_into(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * codes,
+        struct ggml_tensor  * scales,
+        struct ggml_tensor  * table,
+        struct ggml_tensor  * aux,
+        struct ggml_tensor  * x,
+        struct ggml_tensor  * ids,
+        struct ggml_tensor  * map,
+        struct ggml_tensor  * base,
+        int                   fmt,
+        int                   n_rows) {
+    GGML_ASSERT(x->type == GGML_TYPE_F32 && ggml_is_contiguous(x));
+    GGML_ASSERT(fmt >= 0 && fmt <= 9);
+    GGML_ASSERT(ids && map && ids->type == GGML_TYPE_I32 && map->type == GGML_TYPE_I16 && ggml_is_contiguous(ids));
+    GGML_ASSERT(x->ne[2] == ids->ne[1] && (x->ne[1] == 1 || x->ne[1] == ids->ne[0]));
+    struct ggml_tensor * result;
+    if (base) {
+        GGML_ASSERT(base->type == GGML_TYPE_F32 && ggml_is_contiguous(base));
+        GGML_ASSERT(base->ne[0] == n_rows && base->ne[1] == ids->ne[0] && base->ne[2] == ids->ne[1]);
+        result = ggml_view_tensor(ctx, base);
+    } else {
+        result = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n_rows, ids->ne[0], ids->ne[1]);
+    }
+    int32_t params[3] = { fmt, n_rows, (int32_t) x->ne[0] };
+    memcpy(result->op_params, params, sizeof(params));
+    result->op     = GGML_OP_INK2_MUL_MAT;
+    result->src[0] = codes;
+    result->src[1] = scales;
+    result->src[2] = table;
+    result->src[3] = aux;
+    result->src[4] = x;
+    result->src[5] = ids;
+    result->src[6] = map;
+    result->src[8] = base;
+    ggml_set_op_params_i32(result, 3, 1); // no zero fill
+    return result;
+}
+
+struct ggml_tensor * ggml_ink2_glue(
+        struct ggml_context * ctx,
+        enum ggml_ink2_glue_op op,
+        struct ggml_tensor ** srcs,
+        int                   n_srcs,
+        enum ggml_type        type,
+        int64_t               ne0,
+        int64_t               ne1,
+        int64_t               ne2,
+        int32_t               i0,
+        float                 f0) {
+    GGML_ASSERT(n_srcs > 0 && n_srcs <= GGML_MAX_SRC);
+    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, type, ne0, ne1, ne2);
+    ggml_set_op_params_i32(result, 0, (int32_t) op);
+    ggml_set_op_params_i32(result, 1, i0);
+    ggml_set_op_params_f32(result, 2, f0);
+    result->op = GGML_OP_INK2_GLUE;
+    for (int i = 0; i < n_srcs; ++i) {
+        result->src[i] = srcs[i];
+    }
+    return result;
+}
+
+struct ggml_tensor * ggml_ink2_rel_bias(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * kq,
+        struct ggml_tensor  * table,
+        struct ggml_tensor  * idx) {
+    GGML_ASSERT(kq->type == GGML_TYPE_F32 && ggml_is_contiguous(kq));
+    GGML_ASSERT(table->type == GGML_TYPE_F32 && table->nb[0] == sizeof(float));
+    GGML_ASSERT(idx->type == GGML_TYPE_I32 && idx->nb[0] == sizeof(int32_t));
+    GGML_ASSERT(table->ne[0] == kq->ne[2] && table->ne[2] == kq->ne[1]);
+    GGML_ASSERT(idx->ne[0] == kq->ne[0] && idx->ne[1] == kq->ne[1]);
+    struct ggml_tensor * result = ggml_view_tensor(ctx, kq);
+    result->op     = GGML_OP_INK2_REL_BIAS;
+    result->src[0] = kq;
+    result->src[1] = table;
+    result->src[2] = idx;
+    return result;
+}
+
+struct ggml_tensor * ggml_ink2_rht(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * x,
+        struct ggml_tensor  * signs_in,
+        struct ggml_tensor  * B,
+        struct ggml_tensor  * signs_out,
+        int                   a,
+        float                 scale) {
+    const int64_t n = x->ne[0];
+    GGML_ASSERT(x->type == GGML_TYPE_F32 && ggml_is_contiguous(x));
+    GGML_ASSERT(B->type == GGML_TYPE_F32 && ggml_is_contiguous(B) && B->ne[0] == B->ne[1] && B->ne[0] * a == n);
+    GGML_ASSERT(a > 0 && (a & (a - 1)) == 0);
+    GGML_ASSERT(!signs_in  || (signs_in->type  == GGML_TYPE_F32 && ggml_nelements(signs_in)  == n));
+    GGML_ASSERT(!signs_out || (signs_out->type == GGML_TYPE_F32 && ggml_nelements(signs_out) == n));
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, x->ne);
+    ggml_set_op_params_i32(result, 0, a);
+    ggml_set_op_params_f32(result, 1, scale);
+    result->op     = GGML_OP_INK2_RHT;
+    result->src[0] = x;
+    result->src[1] = B;
+    result->src[2] = signs_in;
+    result->src[3] = signs_out;
+    return result;
+}
+
+struct ggml_tensor * ggml_ink2_rht_multi(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * x,
+        struct ggml_tensor ** signs_in,
+        int                   n_sets,
+        struct ggml_tensor  * B,
+        int                   a,
+        float                 scale) {
+    const int64_t n = x->ne[0];
+    GGML_ASSERT(n_sets >= 1 && n_sets <= 5);
+    GGML_ASSERT(x->type == GGML_TYPE_F32 && ggml_is_contiguous(x) && x->ne[2] == 1 && x->ne[3] == 1);
+    GGML_ASSERT(B->type == GGML_TYPE_F32 && ggml_is_contiguous(B) && B->ne[0] == B->ne[1] && B->ne[0] * a == n);
+    GGML_ASSERT(a > 0 && (a & (a - 1)) == 0);
+    struct ggml_tensor * result = ggml_new_tensor_3d(ctx, GGML_TYPE_F32, n, x->ne[1], n_sets);
+    ggml_set_op_params_i32(result, 0, a);
+    ggml_set_op_params_f32(result, 1, scale);
+    ggml_set_op_params_i32(result, 2, n_sets);
+    result->op     = GGML_OP_INK2_RHT;
+    result->src[0] = x;
+    result->src[1] = B;
+    for (int z = 0; z < n_sets; ++z) {
+        GGML_ASSERT(signs_in[z] && signs_in[z]->type == GGML_TYPE_F32 && ggml_nelements(signs_in[z]) == n);
+        result->src[z == 0 ? 2 : 3 + z] = signs_in[z];
+    }
+    return result;
+}
 
 struct ggml_tensor * ggml_turbo_wht(
         struct ggml_context * ctx,

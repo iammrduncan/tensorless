@@ -7,6 +7,7 @@
 #include "ggml-cuda/common.cuh"
 #include "ggml-cuda/moe-cache.cuh"
 #include "ggml-cuda/acc.cuh"
+#include "ggml-cuda/ink2.cuh"
 #include "ggml-cuda/add-id.cuh"
 #include "ggml-cuda/arange.cuh"
 #include "ggml-cuda/argmax.cuh"
@@ -377,6 +378,30 @@ static ggml_cuda_device_info ggml_cuda_init() {
         if (prop.major == 12 && prop.minor == 1) {
             CUDA_CHECK(cudaSetDevice(physical_id));
             CUDA_CHECK(cudaSetDeviceFlags(cudaDeviceScheduleSpin));
+        } else if (const char * sched_env = getenv("GGML_CUDA_SYNC_SCHED") ? getenv("GGML_CUDA_SYNC_SCHED") : "blocking";
+                   sched_env[0] != '\0' && strcmp(sched_env, "auto") != 0) {
+            // How a host thread waits in a stream/event synchronize. The driver default (auto) spins when there
+            // are fewer GPUs than cores, which burns the launching thread's CPU share while the GPU works; under
+            // CPU contention that share is what the kernel launches need. blocking (the default here): sleep on
+            // an interrupt; yield: spin with sched_yield; spin: always spin; auto: the driver default.
+            unsigned int flags = 0;
+            if (strcmp(sched_env, "blocking") == 0) {
+                flags = cudaDeviceScheduleBlockingSync;
+            } else if (strcmp(sched_env, "yield") == 0) {
+                flags = cudaDeviceScheduleYield;
+            } else if (strcmp(sched_env, "spin") == 0) {
+                flags = cudaDeviceScheduleSpin;
+            }
+            if (flags != 0) {
+                CUDA_CHECK(cudaSetDevice(physical_id));
+                const cudaError_t err = cudaSetDeviceFlags(flags);
+                if (err != cudaSuccess) {
+                    GGML_LOG_WARN("%s: cudaSetDeviceFlags(%s) failed: %s\n", __func__, sched_env, cudaGetErrorString(err));
+                    (void) cudaGetLastError();
+                } else {
+                    GGML_LOG_INFO("  Device %d: host sync schedule %s\n", id, sched_env);
+                }
+            }
         }
 
 #endif  // defined(GGML_USE_HIP)
@@ -2975,6 +3000,18 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_TURBO_WHT:
             ggml_cuda_turbo_wht(ctx, dst);
+            break;
+        case GGML_OP_INK2_MUL_MAT:
+            ggml_cuda_op_ink2_mul_mat(ctx, dst);
+            break;
+        case GGML_OP_INK2_REL_BIAS:
+            ggml_cuda_op_ink2_rel_bias(ctx, dst);
+            break;
+        case GGML_OP_INK2_RHT:
+            ggml_cuda_op_ink2_rht(ctx, dst);
+            break;
+        case GGML_OP_INK2_GLUE:
+            ggml_cuda_op_ink2_glue(ctx, dst);
             break;
         case GGML_OP_SET:
             ggml_cuda_op_set(ctx, dst);
@@ -7513,6 +7550,15 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_CLAMP:
         case GGML_OP_LOG:
             return true;
+        case GGML_OP_INK2_REL_BIAS:
+            return true;
+        case GGML_OP_INK2_GLUE:
+            return true;
+        case GGML_OP_INK2_RHT:
+            return op->src[1]->ne[0] % 4 == 0 &&
+                   (2 * op->ne[0] + op->src[1]->ne[0] * op->src[1]->ne[0]) * sizeof(float) <= 48 * 1024;
+        case GGML_OP_INK2_MUL_MAT:
+            return op->src[4]->ne[0] <= 10240 && (op->src[5] == nullptr || op->src[5]->ne[1] <= 4096);
         case GGML_OP_TURBO_WHT:
             return op->src[0]->type == GGML_TYPE_F32 && op->type == GGML_TYPE_F32 &&
                    op->src[0]->ne[0] % 32 == 0;  // supports 32, 64, and 128 WHT groups

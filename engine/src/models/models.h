@@ -2710,3 +2710,17 @@ struct llama_model_spark2_5 : public llama_model_base {
 
     std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
 };
+
+
+// Inkling-2-Mini (inkling2_loop) from LookAtMyQuant's packed format: weights stay in the pack's .npz/.safetensors
+// files, named by the prepare step's table (tools/inkling-prepare/prepare.py)
+struct ink2_weights;
+struct llama_model_inkling2_loop : public llama_model_base {
+    llama_model_inkling2_loop(const struct llama_model_params & params) : llama_model_base(params) {}
+    void load_arch_hparams(llama_model_loader & ml) override;
+    void load_arch_tensors(llama_model_loader & ml) override;
+
+    std::unique_ptr<llm_graph_context> build_arch_graph(const llm_graph_params & params) const override;
+
+    std::shared_ptr<ink2_weights> ink2;
+};

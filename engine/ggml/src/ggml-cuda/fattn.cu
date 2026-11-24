@@ -844,6 +844,11 @@ static best_fattn_kernel ggml_cuda_get_best_fattn_kernel(const int device, const
         return BEST_FATTN_KERNEL_NONE;
     }
 
+    // Only the TILE kernel adds the indexed bias (ggml_flash_attn_ext_add_indexed_bias), in F32 on every architecture.
+    if (dst->src[6] != nullptr) {
+        return mask ? BEST_FATTN_KERNEL_TILE : BEST_FATTN_KERNEL_NONE;
+    }
+
     // For small batch sizes the vector kernel may be preferable over the kernels optimized for large batch sizes:
     // 192 satisfies % 64 == 0 but has no vec instance (DKQ != DV); force it onto the MMA path.
     const bool can_use_vector_kernel = Q->ne[0] <= 256 && Q->ne[0] % 64 == 0 && Q->ne[0] != 192 && K->ne[1] % FATTN_KQ_STRIDE == 0;
@@ -1033,6 +1038,14 @@ void ggml_cuda_flash_attn_ext(ggml_backend_cuda_context & ctx, ggml_tensor * dst
             snprintf(pkey, sizeof(pkey), "sm60_q4_splitkv<D=%d,T=%d%s>", (int) Qs->ne[0], t_q, pvh ? ",pvhfma2" : "");
             ggml_cuda_fattn_path_note(pkey, dst, -1);
         }
+        return;
+    }
+
+    if (dst->src[6] != nullptr) {
+        // indexed bias: TILE only, see ggml_cuda_get_best_fattn_kernel
+        GGML_ASSERT(ggml_cuda_get_best_fattn_kernel(ggml_cuda_get_device(), dst) == BEST_FATTN_KERNEL_TILE);
+        ggml_cuda_fattn_path_note("tile_ibias", dst, 0);
+        ggml_cuda_flash_attn_ext_tile(ctx, dst);
         return;
     }
 

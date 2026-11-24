@@ -618,6 +618,10 @@ extern "C" {
         GGML_OP_DSV4_HC_COMB,
         GGML_OP_DSV4_HC_PRE,
         GGML_OP_DSV4_HC_POST,
+        GGML_OP_INK2_MUL_MAT,
+        GGML_OP_INK2_REL_BIAS,
+        GGML_OP_INK2_RHT,
+        GGML_OP_INK2_GLUE,
 
         GGML_OP_UNARY,
 
@@ -2546,6 +2550,17 @@ extern "C" {
             struct ggml_tensor * a,
             struct ggml_tensor * sinks);
 
+    GGML_API bool ggml_flash_attn_ext_has_indexed_bias(const struct ggml_tensor * a);
+
+    // Add table[indices[key, query], head, query] to the mask, in F32 (upstream PR 32740's contract).
+    // table:   F32 [n_bins, n_head, n_batch*ne3], contiguous
+    // indices: I32 [n_kv,   n_batch*ne3],         contiguous, every value in [0, n_bins)
+    // Queries from all streams are flattened in stream order. A mask is required (mask->ne[2] == 1).
+    GGML_API void ggml_flash_attn_ext_add_indexed_bias(
+            struct ggml_tensor * a,
+            struct ggml_tensor * table,
+            struct ggml_tensor * indices);
+
     // TODO: needs to be adapted to ggml_flash_attn_ext
     GGML_API struct ggml_tensor * ggml_flash_attn_back(
            struct ggml_context * ctx,
@@ -2727,6 +2742,111 @@ extern "C" {
             int                   direction,
             int                   group_size,    // 0 = auto (64 or 128 from ne[0])
             struct ggml_tensor  * scale);        // NULL = no InnerQ scaling
+
+    // Inkling-2 packed matrix product (LookAtMyQuant inkling2-packed-v1, see ggml-inkling2.h), in the stored basis:
+    //   dense   (ids == NULL): y[M, N] = Q x, x [K, N]
+    //   experts (ids [n_used, N] I32, map [2, n_expert] I16 of (format id, slab index)): y[M, n_used, N] holds
+    //   Q_e x[:, slot (or 0 when x has one slot), t] for the experts whose format is fmt, and 0 for the others.
+    // codes: trellis I32 [n*k/32, M(, E)], NVFP4 I8 [K/2, M, E], Lloyd-Max I8 flat; scales: F16 [M(, E)] or NVFP4 I8
+    // [K/16, M, E]; table: the f16 trellis LUT, the f32 Lloyd-Max levels or the f32 NVFP4 outer scales [E];
+    // aux: the f32 E4M3 table [256] for NVFP4, else NULL.
+    GGML_API struct ggml_tensor * ggml_ink2_mul_mat(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * codes,
+            struct ggml_tensor  * scales,
+            struct ggml_tensor  * table,
+            struct ggml_tensor  * aux,
+            struct ggml_tensor  * x,
+            struct ggml_tensor  * ids,
+            struct ggml_tensor  * map,
+            int                   fmt,
+            int                   n_rows);
+
+    // dense ggml_ink2_mul_mat whose row r lands in row row_map[r] of a [n_total, N] result; with base, the result is
+    // base itself (each call fills its own rows), so several matrices can fill one output
+    GGML_API struct ggml_tensor * ggml_ink2_mul_mat_rows(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * codes,
+            struct ggml_tensor  * scales,
+            struct ggml_tensor  * table,
+            struct ggml_tensor  * x,
+            struct ggml_tensor  * row_map,
+            struct ggml_tensor  * base,
+            int                   fmt,
+            int                   n_rows,
+            int                   n_total);
+
+    // ggml_ink2_mul_mat with experts that writes into base (the result is base itself) and never zero-fills: the
+    // slabs of one side, chained, fill every routed (token, slot) pair of one output between them
+    GGML_API struct ggml_tensor * ggml_ink2_mul_mat_into(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * codes,
+            struct ggml_tensor  * scales,
+            struct ggml_tensor  * table,
+            struct ggml_tensor  * aux,
+            struct ggml_tensor  * x,
+            struct ggml_tensor  * ids,
+            struct ggml_tensor  * map,
+            struct ggml_tensor  * base,
+            int                   fmt,
+            int                   n_rows);
+
+    // Inkling-2 decode glue: one fused kernel per sub-op (GGML_INK2_GLUE_*), srcs as the sub-op documents them
+    enum ggml_ink2_glue_op {
+        GGML_INK2_GLUE_CLIP      = 0, // x [d, H, T], scale? (d or d*H), tau? [T]; f0 = threshold
+        GGML_INK2_GLUE_MIX       = 1, // query [n, n_q], states... [n, T]; result [n, T, n_q]
+        GGML_INK2_GLUE_CTL_DOWN  = 2, // cur [n, T], msg [n, T], down [2n, R]; result: split-K partials [2 R S + 2 S, T]
+        GGML_INK2_GLUE_CTL_BLEND = 3, // cur, msg, partials, gain [R, n], forget [R, n]; result [n, T]
+        GGML_INK2_GLUE_SWIGLU    = 4, // gu [2 n_ff, n_used, T]; result [n_ff, n_used, T]
+        GGML_INK2_GLUE_TOPK      = 5, // logits [n_exp, T], bias [n_exp]; i0 = n_used; result I32 [n_used, T]
+        GGML_INK2_GLUE_SLOTSUM   = 6, // dn [n, n_used, T], logits [n_exp, T], ids [n_used, T]; f0 = scale; result [n, T]
+        GGML_INK2_GLUE_CONV      = 7, // cur [C, T], past [3, C], kernel [4, C], dynamic? [4 h, T], state views...;
+                                      // i0 = number of state views; f0 = output scale; result [C, T]
+        GGML_INK2_GLUE_TABLE     = 8, // proj [d, ext], r [d, H, T], sink [H, T]; result [ext + 1, H, T]
+    };
+
+    GGML_API struct ggml_tensor * ggml_ink2_glue(
+            struct ggml_context * ctx,
+            enum ggml_ink2_glue_op op,
+            struct ggml_tensor ** srcs,
+            int                   n_srcs,
+            enum ggml_type        type,
+            int64_t               ne0,
+            int64_t               ne1,
+            int64_t               ne2,
+            int32_t               i0,
+            float                 f0);
+
+    // kq [n_kv, n_q, n_head] += table[h, idx[kv, q], q], in place; table [n_head, n_bins, n_q], idx I32 [n_kv, n_q]
+    // (the Inkling-2 relative-position bias, gathered by distance inside the kernel)
+    GGML_API struct ggml_tensor * ggml_ink2_rel_bias(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * kq,
+            struct ggml_tensor  * table,
+            struct ggml_tensor  * idx);
+
+    // y = signs_out * ((A (x) B) (signs_in * x)) * scale per column of x [n, cnt], n = a*b: the Inkling-2 randomized
+    // Hadamard in one op. A is the a x a Sylvester matrix in natural order (applied as butterflies); B comes transposed
+    // (B[bk * b + bi]: output bi of each b-long slice = sum over bk of B[bk * b + bi] * x[bk]). Signs may be NULL.
+    GGML_API struct ggml_tensor * ggml_ink2_rht(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * x,
+            struct ggml_tensor  * signs_in,
+            struct ggml_tensor  * B,
+            struct ggml_tensor  * signs_out,
+            int                   a,
+            float                 scale);
+
+    // the input rotations of one x [n, cnt] under n_sets (1..5) sign vectors in one op: [n, cnt, n_sets], set z being
+    // ggml_ink2_rht(x, signs_in[z], B, NULL, a, scale)
+    GGML_API struct ggml_tensor * ggml_ink2_rht_multi(
+            struct ggml_context * ctx,
+            struct ggml_tensor  * x,
+            struct ggml_tensor ** signs_in,
+            int                   n_sets,
+            struct ggml_tensor  * B,
+            int                   a,
+            float                 scale);
 
     // DeepSeek V4 Lightning Indexer
     GGML_API struct ggml_tensor * ggml_lightning_indexer(

@@ -2489,6 +2489,22 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_turbo_wht(params, tensor);
             } break;
+        case GGML_OP_INK2_MUL_MAT:
+            {
+                ggml_compute_forward_ink2_mul_mat(params, tensor);
+            } break;
+        case GGML_OP_INK2_REL_BIAS:
+            {
+                ggml_compute_forward_ink2_rel_bias(params, tensor);
+            } break;
+        case GGML_OP_INK2_RHT:
+            {
+                ggml_compute_forward_ink2_rht(params, tensor);
+            } break;
+        case GGML_OP_INK2_GLUE:
+            {
+                GGML_ABORT("INK2_GLUE has no CPU implementation (the graph emits it only with the weights on a GPU)");
+            } break;
         case GGML_OP_LIGHTNING_INDEXER:
             {
                 ggml_compute_forward_lightning_indexer(params, tensor);
@@ -2686,6 +2702,10 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_SOLVE_TRI:
         case GGML_OP_GATED_DELTA_NET:
         case GGML_OP_TURBO_WHT:
+        case GGML_OP_INK2_MUL_MAT:
+        case GGML_OP_INK2_REL_BIAS:
+        case GGML_OP_INK2_RHT:
+        case GGML_OP_INK2_GLUE:
         case GGML_OP_DSV4_HC_COMB:
         case GGML_OP_DSV4_HC_PRE:
         case GGML_OP_DSV4_HC_POST:
@@ -3449,6 +3469,11 @@ struct ggml_cplan ggml_graph_plan(
                 case GGML_OP_TURBO_WHT:
                     {
                         cur = 0;  // no extra workspace needed
+                    } break;
+                case GGML_OP_INK2_MUL_MAT:
+                    {
+                        // one decoded row per thread
+                        cur = (node->src[4]->ne[0] + 16) * sizeof(float) * n_tasks;
                     } break;
                 case GGML_OP_LIGHTNING_INDEXER:
                     {

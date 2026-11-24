@@ -71,3 +71,15 @@ The upstream license is in `LICENSE`; tensorless's own changes are Apache-2.0 (s
 ## Known issue
 
 The CPU backend's PN dot product (`ggml_vec_dot_pn_t_q8_0` in `ggml-cpu/quants.c`) shifts by element index instead of pair index and decodes most PN weights wrong. GPU paths are correct and every tensorless recipe runs the whole model on the GPU; do not run PN models on the CPU backend or with partial offload until it is fixed.
+
+## Inkling-2-Mini (inkling2_loop) from LookAtMyQuant's packed format
+
+- `ggml/include/ggml-inkling2.h`, `tools/inkling-dump/check_rows.py`: ports of LookAtMyQuant's
+  `runtime_cuda/inkling/formats.py` and `format_metadata.py` decoders (github.com/ShinMegamiBoson/lookatmyquant, MIT).
+- `src/models/inkling2-loop.cpp`: written for this tree after transformers' `modeling_inkling2_loop.py` (Apache-2.0) and
+  the design of upstream llama.cpp's `src/models/inkling2.cpp` / `inkling2-loop.cpp` (MIT): slot numbering, depth mix,
+  message gates, convolutions with recurrent state, the sink folded into the bias table.
+- `tests/inkling2/reference_logits.py` wraps LookAtMyQuant's `reference.py` with the embedding kept in float32.
+- `ggml_flash_attn_ext_add_indexed_bias` (`ggml.c`, CPU `ops.cpp`, CUDA TILE kernel): the contract of upstream llama.cpp
+  PR 32740 (MIT), F32 table [n_bins, n_head, T] and I32 index [n_kv, T]; inkling2_loop feeds it its sink-folded relative
+  bias table and the relative-position index, so attention runs as flash attention without a dense KQ bias.
