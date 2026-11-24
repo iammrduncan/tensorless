@@ -1,164 +1,173 @@
 ---
-// The launch targets as spec sheets, read from recipes/ (src/release.mjs) and the model data.
-import map from "../../data/model-map.json";
-import { recipes, release } from "../../release.mjs";
+// The launch targets as one list to copy from: each recipe's command, card and the speeds its [receipt]
+// states, read from recipes/ (src/release.mjs). A draft recipe comes last, with --allow-draft.
+import { recipes } from "../../release.mjs";
 
 const copyIcon = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3.5 10.5h-.5A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>`;
-const types = (col: number) => {
-  const c: Record<string, number> = {};
-  for (const l of map.layers) if (l.kind !== "nextn") for (const t of l.t) if ((t[col + 1] as number) > 1e6) c[t[col] as string] = (c[t[col] as string] ?? 0) + 1;
-  return Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${k} ×${n}`).join(", ");
-};
-// The model data (read per token, weight types) covers the two Qwen3.8-27B files; North-Mini-Code-1.0's
-// types come from its recipe and its load log (docs/receipts/engine-v0.3.0/).
-const perToken = (k: string) => (map.per_token_bytes[k] / 2 ** 30).toFixed(2);
-const about: Record<string, { what: string; types: string; rotated: string; perToken?: string; long: string }> = {
-  pn3: {
-    what: "Qwen3.8-27B in PN, our P100-native weight format: pn3t on most weight matrices, pn4t where they need it, and 19 more raised to pn4t (the mix P0k+19).",
-    types: types(3),
-    rotated: `all ${map.rotation.count} PN tensors`,
-    perToken: perToken("pn3"),
-    long: "not measured yet",
-  },
-  q3floor: {
-    what: "Unsloth's UD-IQ3_XXS of Qwen3.8-27B with its 91 sub-3-bit tensors raised to IQ3_XXS: a 3-bit floor, in standard llama.cpp types. The model the P100 kernels were first tuned on.",
-    types: types(5),
-    rotated: "none",
-    perToken: perToken("q3floor"),
-    long: "24.52 / 22.92 tok/s at 32K / 65K, on the decode climb's starting commit",
-  },
-  nmc: {
-    what: "CohereLabs' 30B mixture-of-experts model for code, 8 of 128 experts per token, in Unsloth's UD-IQ3_XXS file, unmodified. Tuned on this card by its own decode hill climb.",
-    types: "IQ2_S, IQ3_S (experts), Q6_K (attention, head)",
-    rotated: "none",
-    long: "66.06 tok/s after a 32,768-token prompt; its context is 36,864 tokens",
-  },
-};
-const cards = recipes
-  .filter((r) => r.status === "released")
-  .map((r) => ({
+// Rounded half up, as the receipts round them (25.45 -> 25.5).
+const tps = (v?: number) => (v == null ? "–" : v >= 100 ? String(Math.round(v)) : (Math.round(v * 10 + 1e-9) / 10).toFixed(1));
+const rows = recipes.map((r) => {
+  const draft = r.status !== "released";
+  const cmd = `tensorless run ${r.model.hf_repo}${draft ? " --allow-draft" : ""}`;
+  return {
+    cmd,
+    draft,
     repo: r.model.hf_repo,
-    name: r.model.name,
-    title: r.model.hf_repo.split("/")[1].replace(/-GGUF$/, ""),
-    ...about[r.model.name],
-    // A pack (model.pack) has no size_bytes of its own: its size is the sum of its files'.
-    size: ((r.model.pack ? r.model.pack.files.reduce((n, f) => n + f.size_bytes, 0) : r.model.size_bytes) / 2 ** 30).toFixed(2),
-    measured: release.measured[r.model.hf_repo],
-    license: r.model.license.split(" (")[0],
-    cmd: `tensorless run ${r.model.hf_repo}`,
-  }));
+    card: r.card.title.replace(/^NVIDIA /, ""),
+    decode: tps(r.receipt?.decode_tps?.short),
+    prefill: tps(r.receipt?.prefill_tps?.ctx_4k),
+    long: tps(r.receipt?.decode_tps?.ctx_32k),
+  };
+});
+const released = rows.filter((r) => !r.draft).length;
+const words = ["No", "One", "Two", "Three", "Four", "Five", "Six"];
 ---
 
 <section class="section" id="models" aria-labelledby="models-title">
   <div class="wrap">
     <p class="label" data-reveal>Launch targets</p>
-    <h2 id="models-title" class="h2" data-reveal>Three models, one card, one engine.</h2>
-    <p class="lede" data-reveal>
-      Each target is a recipe: one model on one card, with the exact image, file and settings that were measured. Name it by its
-      Hugging Face repository, or by its short name.
-    </p>
-    <div class="cards">
-      {
-        cards.map((c, i) => (
-          <article class="card panel" data-reveal style={`--d:${i * 0.06}s`}>
-            <h3 class="mono">{c.title}</h3>
-            <p class="what small">{c.what}</p>
-            <dl>
-              <div><dt>decode, published image</dt><dd><b>{c.measured.toFixed(2)} tok/s</b></dd></div>
-              <div><dt>long context</dt><dd>{c.long}</dd></div>
-              <div><dt>file</dt><dd>{c.size} GiB</dd></div>
-              {c.perToken && <div><dt>read per token</dt><dd>{c.perToken} GiB</dd></div>}
-              <div><dt>weight types</dt><dd class="mono">{c.types}</dd></div>
-              <div><dt>inputs rotated</dt><dd>{c.rotated}</dd></div>
-              <div><dt>license</dt><dd>{c.license}</dd></div>
-              <div><dt>short name</dt><dd class="mono">{c.name}</dd></div>
-            </dl>
-            <div class="cmd">
-              <code>{c.cmd}</code>
-              <button class="copy" type="button" data-copy={c.cmd} aria-label={`Copy: ${c.cmd}`} set:html={copyIcon} />
-            </div>
-            <p class="links small">
-              <a href={`https://huggingface.co/${c.repo}`}>On Hugging Face</a>
-              <a href="/docs/reference/launch-targets/">Launch targets reference</a>
-            </p>
-          </article>
-        ))
-      }
+    <h2 id="models-title" class="h2" data-reveal>{words[released] ?? released} models, one card, one engine.</h2>
+    <p class="lede" data-reveal>Copy a command and run it. Each one is a recipe: the image, file and settings that were measured on that card.</p>
+    <div class="list" data-reveal>
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Command</th>
+            <th scope="col" class="card">Card</th>
+            <th scope="col" class="num">Decode</th>
+            <th scope="col" class="num">Prefill</th>
+            <th scope="col" class="num long">Decode at 32K</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            rows.map((r) => (
+              <tr>
+                <td>
+                  <div class="c">
+                    <div class="cmd">
+                      <code>{r.cmd}</code>
+                      <button class="copy" type="button" data-copy={r.cmd} aria-label={`Copy: ${r.cmd}`} set:html={copyIcon} />
+                    </div>
+                    {r.draft && <span class="tag">draft</span>}
+                  </div>
+                </td>
+                <td data-label="Card">{r.card}</td>
+                <td class="num" data-label="Decode">{r.decode}</td>
+                <td class="num" data-label="Prefill">{r.prefill}</td>
+                <td class="num" data-label="Decode at 32K">{r.long}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
     </div>
+    <p class="note small" data-reveal>
+      Tokens a second on one card, greedy, from each recipe's receipt: decode after a short prompt (North-Mini-Code-1.0: 4,096
+      tokens), prefill on a cold prompt of about 4,000 tokens, decode after a 32K prompt. – is not measured yet. A draft has not
+      passed the release gate on its published image. <a href="/docs/reference/launch-targets/">Every target in full</a>
+    </p>
   </div>
 </section>
 
 <style>
-  .cards {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 1rem;
+  .list {
     margin-top: 2rem;
+    overflow-x: auto;
   }
-  .card {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    padding: 1.3rem 1.3rem 1.2rem;
-    box-shadow: none;
-  }
-  h3 {
-    margin: 0;
-    font-size: 1rem;
-    word-break: break-all;
-  }
-  .what {
-    margin: 0.5rem 0 0;
-  }
-  dl {
-    margin: 1rem 0 0;
-  }
-  dl div {
-    display: grid;
-    grid-template-columns: 9.5rem 1fr;
-    gap: 0.8rem;
-    padding: 0.5rem 0;
-    border-top: 1px solid var(--rule);
+  table {
+    width: 100%;
+    table-layout: fixed;
+    border-collapse: collapse;
     font-size: 0.86rem;
   }
-  dt {
+  th.card {
+    width: 9rem;
+  }
+  th.num {
+    width: 5rem;
+  }
+  th.long {
+    width: 7.5rem;
+  }
+  th {
+    text-align: left;
+    font-weight: 500;
     color: var(--muted);
+    padding: 0 0.8rem 0.6rem;
+    white-space: nowrap;
   }
-  dd {
-    margin: 0;
+  td {
+    padding: 0.45rem 0.8rem;
+    border-top: 1px solid var(--rule);
+    white-space: nowrap;
+    vertical-align: middle;
+  }
+  th:first-child,
+  td:first-child {
+    padding-left: 0;
+  }
+  .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .c {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
     min-width: 0;
-    overflow-wrap: anywhere;
-  }
-  dd.mono {
-    font-size: 0.78rem;
-  }
-  dd b {
-    font-weight: 650;
   }
   .cmd {
-    margin-top: auto;
+    flex: 1;
+    min-width: 0;
     background: var(--panel-2);
   }
-  dl + .cmd {
-    margin-top: 1rem;
-  }
   .cmd code {
-    font-size: 0.74rem;
+    padding: 0.45rem 0.7rem;
+    font-size: 0.78rem;
   }
-  .links {
-    display: flex;
-    gap: 1.2rem;
-    margin: 0.8rem 0 0;
+  .copy {
+    width: 2.2rem;
   }
-  .links a {
+  .tag {
+    font-size: 0.72rem;
+    color: var(--muted);
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    padding: 0.05rem 0.5rem;
+  }
+  @media (max-width: 720px) {
+    thead {
+      display: none;
+    }
+    tr {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.3rem 1.2rem;
+      padding: 0.7rem 0;
+      border-top: 1px solid var(--rule);
+    }
+    td {
+      display: block;
+      padding: 0;
+      border: 0;
+      text-align: left;
+    }
+    td:first-child {
+      flex: 1 0 100%;
+      min-width: 0;
+      max-width: 100%;
+    }
+    td[data-label]::before {
+      content: attr(data-label) " ";
+      color: var(--muted);
+    }
+  }
+  .note {
+    margin: 0.9rem 0 0;
+    color: var(--muted);
+  }
+  .note a {
     color: var(--ink-2);
-  }
-  @media (max-width: 860px) {
-    .cards {
-      grid-template-columns: 1fr;
-    }
-    dl div {
-      grid-template-columns: 8rem 1fr;
-    }
   }
 </style>

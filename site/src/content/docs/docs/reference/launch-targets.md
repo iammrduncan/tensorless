@@ -8,13 +8,19 @@ sidebar:
 
 A launch target is one recipe: one model on one card, released after its image was measured on that card. tensorless v0.4.0 has three, all on the NVIDIA Tesla P100 16 GB and all on `engine-v0.4.0`. A fourth recipe, Inkling-2-Mini, is a [draft](#draft-in-v040-inkling-2-mini).
 
-| Launch command | Short name | Decode, published image | Decode, research receipt |
-|---|---|---:|---:|
-| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | `pn3` | **30.46 tok/s** | 30.43 tok/s |
-| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | `q3floor` | **26.63 tok/s** | 26.53 tok/s |
-| `tensorless run unsloth/North-Mini-Code-1.0-GGUF` | `nmc` | **94.82 tok/s** | 79.77 tok/s, after a 4,096-token prompt |
+| Command | Short name | Card | Decode | Prefill | Decode at 32K |
+|---|---|---|---:|---:|---:|
+| `tensorless run iamMrDuncan/Qwen3.8-27B-PN3-GGUF` | `pn3` | Tesla P100 16 GB | 30.4 | 200 | – |
+| `tensorless run iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF` | `q3floor` | Tesla P100 16 GB | 26.5 | – | 24.5 |
+| `tensorless run unsloth/North-Mini-Code-1.0-GGUF` | `nmc` | Tesla P100 16 GB | 79.8 | 446 | 66.1 |
+| `tensorless run shinmegamiboson/Inkling-2-Mini-LookAtMyQuant-12.8GB --allow-draft` (draft) | `inkling2-mini` | Tesla P100 16 GB | 28.5 | 240 | 25.5 |
 
-All decode numbers are greedy and single-stream. "Published image" is `tensorless bench` on the released image: the median of 3 runs of 256 tokens after a 429-token prompt (North-Mini-Code-1.0: 411 tokens), on one Tesla P100-PCIE-16GB, with the recipes' `GGML_CUDA_SYNC_SCHED=auto`. "Research receipt" is a hill climb's judge on a source build of a research commit: 256 tokens after a cold prompt of about 600 tokens for the Qwen3.8-27B models, and after a cold 4,096-token prompt for North-Mini-Code-1.0, which is why its published-image number is the higher one. The full measurements are in [Receipts](receipts.md).
+Tokens a second on one card, greedy. These are the numbers in each recipe's `[receipt]`:
+- decode after a short prompt (North-Mini-Code-1.0: 4,096 tokens);
+- prefill on a cold prompt of about 4,000 tokens;
+- decode after a 32K prompt.
+
+– means not measured yet. Most of these come from a hill climb's or goal campaign's judge, on a source build of a research commit. Each target's section below gives the published image's own measurement beside them; the published image has decode 30.46, 26.63 and 94.82 tok/s with `tensorless bench`, on a 429- or 411-token prompt, with the recipes' `GGML_CUDA_SYNC_SCHED=auto`. The full measurements are in [Receipts](receipts.md).
 
 `tensorless models` lists the recipes your launcher knows, and `tensorless info MODEL` shows any of them in full.
 
