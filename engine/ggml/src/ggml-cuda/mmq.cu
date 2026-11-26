@@ -208,7 +208,7 @@ void ggml_cuda_mul_mat_q(
             ne00, ne01, ne1, s01, ne11, s1,
             ne02, ne12, s02, s12, s2,
             ne03, ne13, s03, s13, s3,
-            ne1, ne1};
+            ne1, ne1, nullptr, nullptr, 0};
         ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
         return;
     }
@@ -224,6 +224,9 @@ void ggml_cuda_mul_mat_q(
     ggml_cuda_pool_alloc<int32_t> ids_src1(ctx.pool(), ne_get_rows);
     ggml_cuda_pool_alloc<int32_t> ids_dst(ctx.pool(), ne_get_rows);
     ggml_cuda_pool_alloc<int32_t> expert_bounds(ctx.pool(), ne02 + 1);
+    // Upper bound for any tile size J >= 8: the tiles of J columns per expert number at most ne12*n_expert_used/8 + ne02.
+    ggml_cuda_pool_alloc<int2>    tile_list(ctx.pool(), ne_get_rows/8 + ne02 + 1);
+    ggml_cuda_pool_alloc<int32_t> tile_count(ctx.pool(), 1);
 
     // gate/up activations are broadcast across experts (ne11 == 1): quantize each token once and
     // scatter to its slots. ids_src1 then holds the inverse map (token slot -> compact row).
@@ -295,7 +298,7 @@ void ggml_cuda_mul_mat_q(
         ne00, ne01, ne_get_rows, s01, ne_get_rows, s1,
         ne02, ne02, s02, s12, s2,
         ne03, ne13, s03, s13, s3,
-        ne12, ncols_opt};
+        ne12, ncols_opt, tile_list.get(), tile_count.get(), ne_get_rows};
 
     ggml_cuda_mul_mat_q_switch_type(ctx, args, stream);
 }

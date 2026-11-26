@@ -7,8 +7,36 @@ using namespace ggml_cuda_mma;
 
 #include "mmq.cuh"
 
+// Integer dot of four int8 pairs for the MMQ dot kernels. On sm_60 (no DP4A) this sign-extends
+// each operand's bytes to 16 bits with two PRMT and sums four mad.wide.s16 products. The integer
+// sum is exact, so it equals ggml_cuda_dp4a, which keeps the 4x VMAD form for the decode kernels.
+static __device__ __forceinline__ int ggml_cuda_mmq_dot4(const int a, const int b, int c) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ == 600 && !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+    asm("{\n\t"
+        ".reg .b32 x0, x1, y0, y1;\n\t"
+        ".reg .b16 xa, xb, xc, xd, ya, yb, yc, yd;\n\t"
+        "prmt.b32 x0, %1, 0, 0x9180;\n\t"
+        "prmt.b32 x1, %1, 0, 0xb3a2;\n\t"
+        "prmt.b32 y0, %2, 0, 0x9180;\n\t"
+        "prmt.b32 y1, %2, 0, 0xb3a2;\n\t"
+        "mov.b32 {xa, xb}, x0;\n\t"
+        "mov.b32 {xc, xd}, x1;\n\t"
+        "mov.b32 {ya, yb}, y0;\n\t"
+        "mov.b32 {yc, yd}, y1;\n\t"
+        "mad.wide.s16 %0, xa, ya, %0;\n\t"
+        "mad.wide.s16 %0, xb, yb, %0;\n\t"
+        "mad.wide.s16 %0, xc, yc, %0;\n\t"
+        "mad.wide.s16 %0, xd, yd, %0;\n\t"
+        "}"
+        : "+r"(c) : "r"(a), "r"(b));
+    return c;
+#else
+    return ggml_cuda_dp4a(a, b, c);
+#endif
+}
+
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q4_0_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
@@ -26,6 +54,9 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
+            if (j > j_max) {
+                continue;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < I; i0 += warp_size) {
@@ -58,7 +89,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 }
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q4_1_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
@@ -76,6 +107,9 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
+            if (j > j_max) {
+                continue;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < I; i0 += warp_size) {
@@ -107,11 +141,57 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
     }
 }
 
+// The guard keeps the columns j = m*nwarps + threadIdx.y up to j_max, so a warp's active columns are the first n_act of its
+// NCOL columns, and n_act is the same for every thread of the warp. Each count gets a body with no column branch.
+template <int nwarps, int NCOL> static __device__ __forceinline__ int ggml_cuda_mmq_warp_active_cols(const int j_max) {
+    const int w = threadIdx.y;
+    return j_max < w ? 0 : min(NCOL, (j_max - w)/nwarps + 1);
+}
+
+template <int n, int NCOL, int I, int nwarps, int warp_size> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_dp4a_cols(
+        const int n_act, const int * __restrict__ x_qs, const int * __restrict__ y_qs, const float * __restrict__ x_df,
+        const float * __restrict__ y_df, float * __restrict__ sum, const int k00) {
+    if constexpr (n <= NCOL) {
+        if (n_act == n) {
+// #pragma unroll
+            for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += VDR_Q8_0_Q8_1_MMQ) {
+                const int k0 = k00 + k01;
+
+#pragma unroll
+                for (int m = 0; m < n; ++m) {
+                    const int j = m*nwarps + threadIdx.y;
+
+#pragma unroll
+                    for (int i0 = 0; i0 < I; i0 += warp_size) {
+                        const int i = i0 + threadIdx.x;
+
+                        const int * v = &x_qs[i*(2*MMQ_TILE_NE_K + 1) + k0];
+                        const int * u = &y_qs[j*MMQ_TILE_Y_K + k0 % MMQ_TILE_NE_K];
+                        const float d8_0 = x_df[i*(2*MMQ_TILE_NE_K/QI8_0) + i/(QI8_0/2) + k0/QI8_0];
+                        const float d8_1 = y_df[j*MMQ_TILE_Y_K + (k0/QI8_1) % (MMQ_TILE_NE_K/QI8_1)];
+
+                        int sumi = 0;
+#pragma unroll
+                        for (int l = 0; l < VDR_Q8_0_Q8_1_MMQ; ++l) {
+                            sumi = ggml_cuda_mmq_dot4(v[l], u[l], sumi);
+                        }
+
+                        sum[m*I/warp_size + i0/warp_size] += d8_0*d8_1 * ((float) sumi);
+                    }
+                }
+            }
+            return;
+        }
+        ggml_cuda_mmq_vec_dot_q8_0_q8_1_dp4a_cols<n + 1, NCOL, I, nwarps, warp_size>(n_act, x_qs, y_qs, x_df, y_df, sum, k00);
+    }
+}
+
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int NCOL      = (J + nwarps - 1) / nwarps;
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(GGML_TYPE_Q8_0, I);
     const int   * x_qs = (const int   *) x;
@@ -119,29 +199,13 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
-// #pragma unroll
-    for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += VDR_Q8_0_Q8_1_MMQ) {
-        const int k0 = k00 + k01;
-
-#pragma unroll
-        for (int j0 = 0; j0 < J; j0 += nwarps) {
-            const int j = j0 + threadIdx.y;
-
-#pragma unroll
-            for (int i0 = 0; i0 < I; i0 += warp_size) {
-                const int i = i0 + threadIdx.x;
-
-                sum[j0/nwarps*I/warp_size + i0/warp_size] += vec_dot_q8_0_q8_1_impl<float, VDR_Q8_0_Q8_1_MMQ>
-                    (&x_qs[i*(2*MMQ_TILE_NE_K + 1) + k0], &y_qs[j*MMQ_TILE_Y_K + k0 % MMQ_TILE_NE_K],
-                     x_df[i*(2*MMQ_TILE_NE_K/QI8_0) + i/(QI8_0/2) + k0/QI8_0], y_df[j*MMQ_TILE_Y_K + (k0/QI8_1) % (MMQ_TILE_NE_K/QI8_1)]);
-            }
-        }
-    }
+    ggml_cuda_mmq_vec_dot_q8_0_q8_1_dp4a_cols<0, NCOL, I, nwarps, warp_size>(
+        ggml_cuda_mmq_warp_active_cols<nwarps, NCOL>(j_max), x_qs, y_qs, x_df, y_df, sum, k00);
 }
 
 template <ggml_type type, int J, bool fallback, mmq_q8_1_ds_layout ds_layout>
 static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
-    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+    const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr data_layout input_layout = get_input_data_layout();
     typedef tile<16,  8, int, input_layout>        tile_A;
@@ -279,7 +343,7 @@ static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_q8_1_mma(
 
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_1_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
@@ -297,6 +361,9 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
+            if (j > j_max) {
+                continue;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < I; i0 += warp_size) {
@@ -311,7 +378,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 }
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_1_q8_1_mma(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr data_layout input_layout = get_input_data_layout();
     typedef tile<16,  8, int, input_layout>        tile_A;
@@ -438,12 +505,56 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #endif // defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
 }
 
+template <int n, int NCOL, int I, int nwarps, int warp_size> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_16_q8_1_dp4a_cols(
+        const int n_act, const int * __restrict__ x_qs, const int * __restrict__ y_qs, const float * __restrict__ x_df,
+        const float * __restrict__ y_df, float * __restrict__ sum, const int k00) {
+    if constexpr (n <= NCOL) {
+        if (n_act == n) {
+// #pragma unroll
+            for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_0) {
+                const int k0 = k00 + k01;
+
+#pragma unroll
+                for (int m = 0; m < n; ++m) {
+                    const int j = m*nwarps + threadIdx.y;
+
+#pragma unroll
+                    for (int i0 = 0; i0 < I; i0 += warp_size) {
+                        const int i = i0 + threadIdx.x;
+
+                        const int * v = &x_qs[i*(2*MMQ_TILE_NE_K + 1) + k0];
+                        const int * u = &y_qs[j*MMQ_TILE_Y_K + k01];
+                        const float * d8_0 = &x_df[i*(2*MMQ_TILE_NE_K*2/QI8_0) + i/(QI8_0/4) + k0/(QI8_0/2)];
+                        const float d8_1 = y_df[j*MMQ_TILE_Y_K + k01/QI8_1];
+
+                        float sumf = 0.0f;
+#pragma unroll
+                        for (int g = 0; g < QI8_0/(QI8_0/2); ++g) {
+                            int sumi = 0;
+#pragma unroll
+                            for (int l = g*(QI8_0/2); l < (g + 1)*(QI8_0/2); ++l) {
+                                sumi = ggml_cuda_mmq_dot4(v[l], u[l], sumi);
+                            }
+                            sumf += d8_0[g]*sumi;
+                        }
+
+                        sum[m*I/warp_size + i0/warp_size] += d8_1*sumf;
+                    }
+                }
+            }
+            return;
+        }
+        ggml_cuda_mmq_vec_dot_q8_0_16_q8_1_dp4a_cols<n + 1, NCOL, I, nwarps, warp_size>(n_act, x_qs, y_qs, x_df, y_df, sum, k00);
+    }
+}
+
 // Used for NVFP4, Q3_K, IQ2_S, and IQ2_XS
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_16_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
+    constexpr int NCOL      = (J + nwarps - 1) / nwarps;
 
     constexpr tile_x_sizes txs = mmq_get_dp4a_tile_x_sizes(type, I);
     const int   * x_qs = (const int   *) x;
@@ -451,31 +562,13 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
     const int   * y_qs = (const int   *) y + 4;
     const float * y_df = (const float *) y;
 
-// #pragma unroll
-    for (int k01 = 0; k01 < MMQ_TILE_NE_K; k01 += QI8_0) {
-        const int k0 = k00 + k01;
-
-#pragma unroll
-        for (int j0 = 0; j0 < J; j0 += nwarps) {
-            const int j = j0 + threadIdx.y;
-
-#pragma unroll
-            for (int i0 = 0; i0 < I; i0 += warp_size) {
-                const int i = i0 + threadIdx.x;
-
-                sum[j0/nwarps*I/warp_size + i0/warp_size] += vec_dot_q8_0_16_q8_1_impl<QI8_0>(
-                    &x_qs[i*(2*MMQ_TILE_NE_K + 1) + k0],
-                    &y_qs[j*MMQ_TILE_Y_K + k01],
-                    &x_df[i*(2*MMQ_TILE_NE_K*2/QI8_0) + i/(QI8_0/4) + k0/(QI8_0/2)],
-                    y_df[j*MMQ_TILE_Y_K + k01/QI8_1]);
-            }
-        }
-    }
+    ggml_cuda_mmq_vec_dot_q8_0_16_q8_1_dp4a_cols<0, NCOL, I, nwarps, warp_size>(
+        ggml_cuda_mmq_warp_active_cols<nwarps, NCOL>(j_max), x_qs, y_qs, x_df, y_df, sum, k00);
 }
 
 // Used for Q3_K, IQ2_S, and IQ2_XS:
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q8_0_16_q8_1_mma(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr data_layout input_layout = get_input_data_layout();
     typedef tile<16,  4, int, input_layout>        tile_A;
@@ -608,7 +701,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 }
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q2_K_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
@@ -634,6 +727,9 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
+            if (j > j_max) {
+                continue;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < I; i0 += warp_size) {
@@ -657,6 +753,9 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
+            if (j > j_max) {
+                continue;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < I; i0 += warp_size) {
@@ -673,7 +772,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 }
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q2_K_q8_1_mma(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr data_layout input_layout = get_input_data_layout();
     typedef tile<16,  4, int, input_layout>        tile_A;
@@ -868,7 +967,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 }
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q3_K_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
@@ -887,6 +986,9 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
+            if (j > j_max) {
+                continue;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < I; i0 += warp_size) {
@@ -903,7 +1005,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 }
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q4_K_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
@@ -922,6 +1024,9 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
+            if (j > j_max) {
+                continue;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < I; i0 += warp_size) {
@@ -938,7 +1043,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 }
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q5_K_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
@@ -957,6 +1062,9 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
+            if (j > j_max) {
+                continue;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < I; i0 += warp_size) {
@@ -973,7 +1081,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 }
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q6_K_q8_1_dp4a(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
     constexpr int warp_size = ggml_cuda_get_physical_warp_size();
     constexpr int nwarps    = ggml_cuda_mmq_get_nthreads(type, J, fallback) / warp_size;
     constexpr int I         = ggml_cuda_mmq_get_I(type, J, fallback);
@@ -992,6 +1100,9 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 #pragma unroll
         for (int j0 = 0; j0 < J; j0 += nwarps) {
             const int j = j0 + threadIdx.y;
+            if (j > j_max) {
+                continue;
+            }
 
 #pragma unroll
             for (int i0 = 0; i0 < I; i0 += warp_size) {
@@ -1008,7 +1119,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 }
 
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_q6_K_q8_1_mma(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
 #if defined(AMD_MFMA_AVAILABLE) || defined(AMD_WMMA_AVAILABLE)
     constexpr data_layout input_layout = get_input_data_layout();
     typedef tile<16,  4, int, input_layout>        tile_A;
@@ -1174,7 +1285,7 @@ template <ggml_type type, int J, bool fallback> static __device__ __forceinline_
 // m16n8k64 MMA call; only the PTX kind (scale_vec::2X ue8m0 vs scale_vec::4X ue4m3)
 // and the per-type stride constant differ.
 template <ggml_type type, int J, bool fallback> static __device__ __forceinline__ void ggml_cuda_mmq_vec_dot_fp4_fp4_mma(
-        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00) {
+        const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max) {
 
     typedef tile<16, 8, int>   tile_A;
     typedef tile<8,  8, int>   tile_B;
