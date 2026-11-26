@@ -1,13 +1,13 @@
-# Engine provenance: engine-v0.4.0
+# Engine provenance: engine-v0.4.1
 
-This directory is the tensorless engine at release **engine-v0.4.0**: a fork of llama.cpp for the NVIDIA Tesla P100 (sm_60). Its kernels were developed and hill-climbed in automated campaigns; this release adds Thinking Machines' Inkling-2-Mini, read in place from LookAtMyQuant's packed format, the work of a goal campaign run on this repository's engine.
+This directory is the tensorless engine at release **engine-v0.4.1**: a fork of llama.cpp for the NVIDIA Tesla P100 (sm_60). Its kernels were developed and hill-climbed in automated campaigns; this release adds faster prompt processing for North-Mini-Code-1.0, the work of a prefill hill climb run on this repository's engine, to engine-v0.4.0.
 
 | Item | Value |
 |---|---|
 | Upstream base | [JakeATX/llamAmpere](https://github.com/JakeATX/llamAmpere) `2cb16936b5d081a92f1d0369954561efb6d1e2c7` (MIT), itself a fork of [TheTom/llama-cpp-turboquant](https://github.com/TheTom/llama-cpp-turboquant) and [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) (MIT) |
-| Goal-campaign commit | `3e343003` (engine tree `28aeb14d`), champion 7 of the Inkling-2-Mini goal campaign |
-| Previous release | engine-v0.3.0 (tensorless commit `011abeee0b9277141d5100d145ce479c151d37be`; its hill-climb commit was `7d8be264fcadf1ec7ea9019f466c01e1253d27c0`) |
-| Files changed from engine-v0.3.0 | 41, 17 of them new, this file included |
+| Hill-climb commit | `1bfd3d6b54dbb8c0a59c97ee6f5b5db2e9db696c` (tree `44809b93`), champion 7 of the North-Mini-Code prefill hill climb, on engine-v0.3.0's tree with one fix (`6ca26460`) |
+| Previous release | engine-v0.4.0 (tensorless commit `675a12b6507821531fc532aac7ac16c13fe57e40`; its goal-campaign commit was `3e343003`, engine tree `28aeb14d`) |
+| Files changed from engine-v0.4.0 | 7, none new, and this file |
 
 ## What this fork adds
 
@@ -26,7 +26,22 @@ The PN kernels are the result of two automated hill climbs, each holding the mod
 - **Decode** (engine-v0.1.0): 131 judged attempts, 28 confirmed improvements, PN3M19 decode on one P100 from 7.74 to about 30 tok/s at short context.
 - **Prefill** (engine-v0.2.0): 369 attempts, 26 promoted improvements, PN3M19 prefill on one P100 from 121.4 to 200.1 tok/s on a cold prompt of about 4,100 tokens, with the decode held within 1% of its starting point.
 
-## New in engine-v0.4.0: Inkling-2-Mini
+## New in engine-v0.4.1: North-Mini-Code-1.0 prefill
+
+The result of an automated prefill hill climb on North-Mini-Code-1.0 in Unsloth's UD-IQ3_XXS file, on one P100, which started from engine-v0.3.0 with the fix for a load with no GPU (tensorless `6ca26460`). Its judge measured the time to first token of a cold 4,096- and 32,768-token code prompt (their geometric mean) and held decode to 1% below the starting point, sampled decode to 3%, the teacher-forced output against the starting point's own (mean KL at most 0.005 nat, top-1 agreement at least 97.5%), and the card's free memory.
+
+- **The climb:** 62 submissions, 6 confirmed improvements, prefill from 386.67 to 527.96 tok/s (+36.6%, the product of the confirmed gains; 446.5 to 642.1 tok/s at 4K and 334.8 to 434.2 at 32K, in the last confirmation), decode 72.84 to 72.70 tok/s.
+- **What changed,** all in the sm_60 CUDA code for prompt processing, on by default (no new switch):
+  - the MMQ tile table for IQ2_S and IQ3_S on sm_60: I = 32 in place of 64 for the non-fallback rows (`mmq-config-pascal-older.cuh`);
+  - for a batched `MUL_MAT_ID`, a list built on the device of the non-empty (expert, column tile) pairs, so the expert MMQ launches only those tiles (`mmid.cu`, `mmq.cu`, `mmq.cuh`);
+  - the MMQ dot kernels: a guard for the columns past the tile's last, and bodies specialised at compile time by a warp's number of active columns, with no column branch (`mmq-vec-dot.cuh`);
+  - on sm_60, which has no DP4A instruction, the MMQ dot of four int8 pairs as four 16-bit multiply-adds (`mad.wide.s16`) after a byte permute, in place of four VMADs; the integer sum is exact, so it equals `ggml_cuda_dp4a`, which the decode kernels keep (`mmq-vec-dot.cuh`);
+  - min-blocks 1 for the D = 128 many-query flash-attention tile, which engine-v0.3.0 gave only to D = 256 under `GGML_CUDA_FATTN_TILE_OCC1`: its shared memory already allows one block per SM, and min-blocks 2 capped it at 128 registers (`fattn-tile.cuh`).
+- **Not included:** the climb's sixth gain, a skip of fully masked key chunks in the flash-attention tile (+1.3%), is not in the last champion, which was built on the champion before it. The two were never measured together.
+- **Rebuilt from the run's export:** the champion's patch against `6ca26460`, whose result is the champion's tree, `44809b93`, exactly. Then the change was applied onto engine-v0.4.0: six files are the champion's byte for byte, and `fattn-tile.cuh` keeps engine-v0.4.0's indexed-bias code with the champion's two-line change. Scanned for lab-only and private terms: 0 hits.
+- **Output:** each change was made to keep the arithmetic's order, and the judge's teacher-forced checks held. These numbers are the climb's, on engine-v0.3.0's base; the release gate measures this engine.
+
+## From engine-v0.4.0: Inkling-2-Mini
 
 The result of an automated goal campaign on one P100, which started from engine-v0.3.0: make the engine run Thinking Machines' Inkling-2-Mini (`inkling2_loop`: 24 layers, 8 of 128 experts per token, a core of middle layers run three times) from LookAtMyQuant's 12.8 GB pack (`inkling2-packed-v1`, 63 files), read in place, at a 32K context on the card. Its judge held the output against the pack's own float32 reference; champion 7 met all seven of the campaign's goals and passed the held-out checks.
 
