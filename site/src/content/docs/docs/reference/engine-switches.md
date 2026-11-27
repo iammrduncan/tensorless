@@ -10,7 +10,7 @@ The engine's P100 kernels are opt-in. Each is turned on by a `GGML_CUDA_*` envir
 
 Every recipe sets the same 21 switches with the same values, and no engine release since engine-v0.1.0 changed the set. From engine-v0.4.0, the three released recipes also set [`GGML_CUDA_SYNC_SCHED`](#the-host-sync-schedule) to `auto`. The engine reads each one once, when it is first needed. The source files named below are under [`engine/ggml/src/ggml-cuda/`](https://github.com/iammrduncan/tensorless/tree/main/engine/ggml/src/ggml-cuda).
 
-The PN weight types need no switch: their kernels run whenever a tensor is `pn3t` or `pn4t`. That includes engine-v0.2.0's [PN prefill path](#the-pn-prefill-path), which is on by default. engine-v0.3.0's [decode paths for North-Mini-Code-1.0](#the-north-mini-code-10-decode-path) need no switch either.
+The PN weight types need no switch: their kernels run whenever a tensor is `pn3t` or `pn4t`. That includes engine-v0.2.0's [PN prefill path](#the-pn-prefill-path), which is on by default. engine-v0.3.0's [decode paths for North-Mini-Code-1.0](#the-north-mini-code-10-decode-path) need no switch either, and nor do engine-v0.4.1's prefill paths for it, which are on by default.
 
 ## Attention
 
@@ -87,7 +87,7 @@ New in engine-v0.4.0 (`ggml-cuda.cu`). It sets how the host thread waits for the
 |---|---|---|---|
 | `GGML_CUDA_SYNC_SCHED` | `auto` | `blocking` | `blocking`: sleep until the GPU signals. `yield`: spin, yielding the CPU between checks. `spin`: always spin. `auto`: the CUDA driver's default, which spins when the machine has fewer GPUs than CPU cores; engine-v0.3.0 and earlier always used it. |
 
-On the release gate's P100, `blocking` read about 1% slower than `auto` for Qwen3.8-27B-PN3, and the same within the runs' spread for the other two launch targets, so their recipes set `auto` ([Receipts](receipts.md#the-host-sync-schedule)). The Inkling-2-Mini recipe, a draft, leaves it unset: its research build was measured with `blocking`.
+On engine-v0.4.0's release gate, `blocking` read about 1% slower than `auto` for Qwen3.8-27B-PN3, and the same within the runs' spread for the other two launch targets, so their recipes set `auto` ([Receipts](receipts.md#the-host-sync-schedule)). The Inkling-2-Mini recipe, a draft, leaves it unset: its research build was measured with `blocking`.
 
 ## Other switches
 

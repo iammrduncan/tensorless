@@ -67,7 +67,7 @@ The receipt was measured with a different prompt, so expect a few percent of dif
 - **TTFT**, time to first token, is how long the request took before the first token arrived. Most of it is reading the 429-token prompt, so it grows with the length of the prompt.
 - **receipt** compares your median with the recipe's receipt, `decode_tps.short = 30.43`. The research hill climb's judge measured that number when it tuned the engine.
 
-When the release was made, the published image measured **30.46 tok/s** on a P100 with this same command: 0.1% above the receipt. Its time to first token was 2.81 s. If your result is within a few percent of 30.43, your card runs the model as it was measured.
+When the release was made, the published image measured **30.30 tok/s** on a P100 with this same command: 0.4% below the receipt. Its time to first token was 2.89 s. If your result is within a few percent of 30.43, your card runs the model as it was measured.
 
 If yours is much lower, look for these:
 
@@ -94,4 +94,4 @@ Next:
 - [Share your results](../how-to/use/share-results.md): numbers from other P100s help everyone.
 - [Benchmark a running server](../how-to/use/benchmark.md): more runs, longer runs and JSON output.
 - [How a release is made, and why you can trust its numbers](../explanation/releases-and-receipts.md).
-- [The receipts](../reference/receipts.md) of engine-v0.4.0, for all three launch targets.
+- [The receipts](../reference/receipts.md) of engine-v0.4.1, for all three launch targets.

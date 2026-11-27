@@ -36,7 +36,7 @@ curl -fsSL https://tensorless.dev/install.sh | sh
 You see:
 
 ```text
-Downloading tensorless 0.4.0 for linux-x86_64
+Downloading tensorless 0.4.1 for linux-x86_64
 Checked sha256 cb0c796fd83a334eb67f163fffb30016f51513f8f6ca4a30e7144875487415eb
 Installed /home/you/.local/bin/tensorless
 
@@ -97,7 +97,7 @@ The name is the model's Hugging Face repository. The launcher finds its recipe f
 1. It pulls the engine image by its digest:
 
    ```text
-   pulling the engine image ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997
+   pulling the engine image ghcr.io/iammrduncan/tensorless-engine@sha256:c89e60b34a0f6098db20f2f2b43c78a93bb70192833cf7656b4a84ae8974346a
    ```
 
    Podman's own download progress follows.

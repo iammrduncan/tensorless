@@ -3,9 +3,10 @@
 # switches, the same for the decode climb (engine-v0.1.0) and the prefill climb (engine-v0.2.0).
 # The prefill climb's faster prompt path is on by default in engine-v0.2.0 and needs no switch.
 # The model file is the one the climbs measured (sha256 15ce2d44...).
-# Released in engine-v0.4.0 after the published image was measured on a P100 (docs/receipts/engine-v0.4.0/).
-# [run] did not change from engine-v0.3.0 but for GGML_CUDA_SYNC_SCHED = "auto", which keeps engine-v0.3.0's host sync
-# schedule; the engine-v0.3.0 recipe is this file at the tag v0.3.0 (image sha256:3423499a...).
+# Released in engine-v0.4.1 after the published image was measured on a P100 (docs/receipts/engine-v0.4.1/).
+# [run] did not change from engine-v0.4.0; the engine-v0.4.0 recipe is this file at the tag v0.4.0 (image sha256:4a015323...).
+# engine-v0.4.0 added GGML_CUDA_SYNC_SCHED = "auto", which keeps engine-v0.3.0's host sync schedule; the engine-v0.3.0
+# recipe is this file at the tag v0.3.0 (image sha256:3423499a...).
 # The engine-v0.2.0 recipe is this file at the tag v0.2.0 (image sha256:b95f77cd...).
 # The engine-v0.1.0 recipe is this file at the tag v0.1.0 (image sha256:35409ff9...).
 schema = 1
@@ -29,9 +30,9 @@ min_memory_mib     = 16000
 min_driver         = "525.60.13"
 
 [engine]
-release = "engine-v0.4.0"
+release = "engine-v0.4.1"
 arch    = "sm60"
-image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997"   # 0.4.0-sm60 (measured as 0.4.0-rc1-sm60)
+image   = "ghcr.io/iammrduncan/tensorless-engine@sha256:c89e60b34a0f6098db20f2f2b43c78a93bb70192833cf7656b4a84ae8974346a"   # 0.4.1-sm60 (measured as 0.4.1-rc1-sm60)
 
 [run]
 alias       = "iamMrDuncan/Qwen3.8-27B-PN3-GGUF"
@@ -76,7 +77,7 @@ GGML_CUDA_FATTN_TILE_OCC1       = "1"
 GGML_CUDA_SYNC_SCHED            = "auto"   # engine-v0.3.0's host sync schedule; engine-v0.4.0 defaults to "blocking"
 
 [receipt]
-source  = "decode_tps.short and prefill: the prefill hill climb's judge, on a source build of engine-v0.2.0's research commit. engine-v0.4.0's published image, measured on a P100 with GGML_CUDA_SYNC_SCHED=auto: 30.46 tok/s median decode with tensorless bench, 30.46 again on a repeat (docs/receipts/engine-v0.4.0/Qwen3.8-27B-PN3-GGUF-p100.md)."
+source  = "decode_tps.short and prefill: the prefill hill climb's judge, on a source build of engine-v0.2.0's research commit. engine-v0.4.1's published image, measured on a P100 with GGML_CUDA_SYNC_SCHED=auto: 30.30 tok/s median decode with tensorless bench, and 192.8 tok/s prefill on a cold 3,651-token prompt; engine-v0.4.0's image read 30.17 and 192.4 on the same card in the same hour (docs/receipts/engine-v0.4.1/Qwen3.8-27B-PN3-GGUF-p100.md)."
 summary = "Prefill about 200 tok/s on a cold prompt of about 4,100 tokens, 1.65x engine-v0.1.0. Decode about 30 tok/s at short context, 1.14x the Q3 baseline model on the same card. Not yet measured at 32K or 65K."
 decode_tps  = { short = 30.43 }
 prefill_tps = { ctx_4k = 200.1 }
