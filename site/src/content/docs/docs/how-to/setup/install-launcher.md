@@ -38,7 +38,7 @@ You need `curl` or `wget`, and `sha256sum` or `shasum`.
 
    ```text
    Downloading tensorless 0.4.1 for linux-x86_64
-   Checked sha256 cb0c796fd83a334eb67f163fffb30016f51513f8f6ca4a30e7144875487415eb
+   Checked sha256 c88a3fdd2814efee8670c87f16d3460adf56b6e2d156cdf95cef7333abc416ca
    Installed /home/you/.local/bin/tensorless
    ```
 
@@ -103,7 +103,7 @@ tensorless version
 ```
 
 ```text
-tensorless 0.4.0 (commit 675a12b6507821531fc532aac7ac16c13fe57e40), linux/amd64
+tensorless 0.4.1 (commit 8a0a93ce1b0d977ac06bba95e0b050d99bf179af), linux/amd64
 ```
 
 `tensorless models` lists the recipes this launcher knows: the launch targets, and a draft. On a machine without an NVIDIA GPU, it cannot tell whether they fit:
