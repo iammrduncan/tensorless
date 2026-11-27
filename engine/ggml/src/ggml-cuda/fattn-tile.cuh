@@ -1339,7 +1339,8 @@ static void launch_fattn_tile_switch_ncols1(ggml_backend_cuda_context & ctx, ggm
                 ? (tile_kpf_noop
                     ? flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, tile_wide, use_logit_softcap, 0, true, true>
                     : flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, tile_wide, use_logit_softcap, 0, true, false>)
-                : (tile_occ1 && DKQ == 256
+                // D=128 is min-blocks 1 by default: its smem already allows one CTA per SM, and min-blocks 2 caps registers at 128.
+                : ((DKQ == 128 || (tile_occ1 && DKQ == 256))
                     ? flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, tile_wide, use_logit_softcap, 1>
                     : flash_attn_tile<DKQ, DV, cols_per_block/ncols2, ncols2, tile_wide, use_logit_softcap>);
             // V3-15 TILE-AB: run stock and the arm on identical inputs, memcmp the full KQV

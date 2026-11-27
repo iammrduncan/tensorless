@@ -5,6 +5,8 @@
 #include <climits>
 #include <cstdint>
 
+#include "mmid.cuh"
+
 #define MMQ_DP4A_MAX_BATCH_SIZE 64  // Max. batch size to use for dp4a MMQ kernels when FP16 tensor cores are available.
 #define MMQ_PTQ1_0_MAX_BATCH_SIZE (1 << 30)  // MMQ at every batch unless GGML_CUDA_PTQ1_0_MMQ_MAX_BATCH lowers it
 #define MMQ_ITER_K                256
@@ -12,7 +14,7 @@
 #define MMQ_NWARPS                8
 
 typedef void (*ggml_cuda_mmq_load_tiles_t)(const char * __restrict__ x, int * x_tile, const int kbx0, const int i_max, const int stride);
-typedef void (*ggml_cuda_mmq_vec_dot_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00);
+typedef void (*ggml_cuda_mmq_vec_dot_t)(const int * __restrict__ x, const int * __restrict__ y, float * __restrict__ sum, const int k00, const int j_max);
 typedef void (*ggml_cuda_mmq_write_back_t)(const float * __restrict__ sum, const int32_t * __restrict__ get_rows_to_sorted,
     float * __restrict__ dst, const float * __restrict__ y_scale, const int stride, const int i_max, const int j_max);
 
@@ -969,7 +971,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
         __syncthreads();
 
-        vec_dot(tile_x, tile_y, sum, 0);
+        vec_dot(tile_x, tile_y, sum, 0, tile_y_max_j);
 
         __syncthreads();
 
@@ -985,7 +987,7 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 
         __syncthreads();
 
-        vec_dot(tile_x, tile_y, sum, MMQ_TILE_NE_K);
+        vec_dot(tile_x, tile_y, sum, MMQ_TILE_NE_K, tile_y_max_j);
 
         __syncthreads();
     }
@@ -1009,7 +1011,7 @@ static __global__ void mul_mat_q(
         const uint3 blocks_per_ne00, const int nrows_x, const int ncols_dst, const int stride_row_x, const int ncols_y, const int stride_col_dst,
         const uint3 channel_ratio, const uint3 nchannels_y, const int stride_channel_x, const int stride_channel_y, const int stride_channel_dst,
         const uint3 sample_ratio, const uint3 nsamples_y, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
-        const uint3 ntx) {
+        const uint3 ntx, const int2 * __restrict__ tile_list, const int32_t * __restrict__ tile_count) {
 
     // Skip unused template specializations for faster compilation:
     if (ggml_cuda_mmq_get_config(type, J, fallback).type == GGML_TYPE_COUNT) {
@@ -1042,10 +1044,20 @@ static __global__ void mul_mat_q(
 
     if constexpr (!ggml_cuda_mmq_get_stream_k(type, J, fallback)) {
         const uint2 tmp2 = fast_div_modulo(blockIdx.z, nchannels_y);
-        const int wt = tmp2.x;
-        const int zt = tmp2.y;
-        const int jt = blockIdx.y;
+        int wt = tmp2.x;
+        int zt = tmp2.y;
+        int jt = blockIdx.y;
         const int it = blockIdx.x;
+
+        if (tile_list) {
+            // MoE: the grid's y dimension indexes the list of non-empty (expert, column tile) pairs.
+            if (blockIdx.y >= static_cast<uint32_t>(*tile_count)) {
+                return;
+            }
+            const int2 tile = tile_list[blockIdx.y];
+            zt = tile.x;
+            jt = tile.y;
+        }
 
         // Defaults for regular matrix multiplication:
         int col_low    = 0;
@@ -1433,6 +1445,9 @@ struct mmq_args {
     int64_t nsamples_x; int64_t nsamples_y; int64_t stride_sample_x; int64_t stride_sample_y; int64_t stride_sample_dst;
     int64_t ncols_max;
     int64_t ncols_opt; // value to optimize the tile size against, launch grid still uses ncols_max
+    int2 * tile_list;   // MoE only: non-empty (expert, column tile) pairs, built on the device
+    int32_t * tile_count; // MoE only: number of entries in tile_list
+    int64_t ncols_ids;  // MoE only: number of token slots (ne12*n_expert_used), bounds the tile count
 };
 
 static size_t mmq_get_nbytes_shared(const ggml_cuda_mmq_config & config, const int cc) {
@@ -1477,12 +1492,28 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
     const uint3 sample_ratio_fd    = init_fastdiv_values(sample_ratio);
 
     if (!ggml_cuda_mmq_get_stream_k(type, J, fallback, cc)) {
+        if (args.tile_list) {
+            ggml_cuda_launch_mm_ids_tile_list(args.expert_bounds, args.tile_list, args.tile_count, args.nchannels_y, J, stream);
+            CUDA_CHECK(cudaGetLastError());
+
+            // Upper bound on the tiles: every expert wastes at most one partial tile.
+            const int ntiles_max = (args.ncols_ids + J - 1) / J + args.nchannels_y;
+            const dim3 block_nums_tile_list(nty, ntiles_max, 1);
+            mul_mat_q<type, J, fallback><<<block_nums_tile_list, block_dims, nbytes_shared, stream>>>
+                (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr, args.y_scale,
+                 blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
+                 channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
+                 sample_ratio_fd, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
+                 ntx_fd, args.tile_list, args.tile_count);
+            return;
+        }
+
         mul_mat_q<type, J, fallback><<<block_nums_xy_tiling, block_dims, nbytes_shared, stream>>>
             (args.x, args.y, args.ids_dst, args.expert_bounds, args.dst, nullptr, args.y_scale,
              blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
              channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
              sample_ratio_fd, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-             ntx_fd);
+             ntx_fd, nullptr, nullptr);
         return;
     }
 
@@ -1511,7 +1542,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
          blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
          channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
          sample_ratio_fd, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-         ntx_fd);
+         ntx_fd, nullptr, nullptr);
 
     if (!fixup_needed) {
         return;

@@ -1,25 +1,25 @@
 ---
 title: "Known limits"
-description: "What tensorless v0.4.0 does not do yet, what has not been measured, and what to avoid."
+description: "What tensorless v0.4.1 does not do yet, what has not been measured, and what to avoid."
 type: project
 sidebar:
   order: 5
 ---
 
-tensorless v0.4.0 is an early release. This page lists what it does not do yet, what has not been measured, and the one thing to avoid. Each item says what is true today; none of them is a promise of when it will change.
+tensorless v0.4.1 is an early release. This page lists what it does not do yet, what has not been measured, and the one thing to avoid. Each item says what is true today; none of them is a promise of when it will change.
 
 ## Long context is not measured for the Qwen3.8-27B models
 
 For the two Qwen3.8-27B models, the receipts measure decode at short context, 256 tokens after a prompt of a few hundred, and prefill on prompts of about 4,000 tokens. Decode and prefill at 32K and 65K context have not been measured on this engine yet.
 
 - **Qwen3.8-27B-PN3:** only the decode hill climb's starting point was measured at long context, at 7.55 and 7.39 tok/s for 32K and 65K. That climb then made short-context decode almost four times faster. Attention takes a larger share of each token at long context, so expect this engine's long-context decode to be below its 30 tok/s, and its long-prompt prefill to be below its 200 tok/s, by amounts nobody has measured yet.
-- **Qwen3.8-27B-UD-IQ3_XXS-Q3Floor:** 24.5 and 22.9 tok/s at 32K and 65K, measured on the decode climb's starting commit, four engine releases back. This model's code path changed little after that: its text stayed bit-identical through both Qwen hill climbs, and its speed was guarded within 3%.
+- **Qwen3.8-27B-UD-IQ3_XXS-Q3Floor:** 24.5 and 22.9 tok/s at 32K and 65K, measured on the decode climb's starting commit, five engine releases back. This model's code path changed little after that: its text stayed bit-identical through both Qwen hill climbs, and its speed was guarded within 3%.
 
 Both Qwen3.8-27B recipes still allocate the full 65,536-token context. North-Mini-Code-1.0 was measured after a 32K prompt, at 66 tok/s; its recipe allocates 36,864 tokens, and nothing longer has been measured.
 
 ## Inkling-2-Mini is a draft
 
-The Inkling-2-Mini recipe pins this release's engine image, but that image has not been measured with the model on a P100: its numbers are the research build's. `pull`, `run` and `serve` refuse it unless you pass `--allow-draft`, and with it they run a configuration the release gate has not seen. It becomes a launch target in a later patch release, once its gate has run. Also not measured for it: `/v1/chat/completions` (its chat template has a thinking channel, and how the server shows it was not checked), the prompt cache across turns, contexts above 32,768 tokens and a load with no GPU. See its [receipt draft](https://github.com/iammrduncan/tensorless/blob/main/docs/receipts/engine-v0.4.0/Inkling-2-Mini-LookAtMyQuant-12.8GB-p100.md).
+The Inkling-2-Mini recipe stays on engine-v0.4.0 and pins its image, `0.4.0-sm60`, which has not been measured with the model on a P100: its numbers are the research build's. `pull`, `run` and `serve` refuse it unless you pass `--allow-draft`, and with it they run a configuration the release gate has not seen. It becomes a launch target in a later patch release, once its gate has run. Also not measured for it: `/v1/chat/completions` (its chat template has a thinking channel, and how the server shows it was not checked), the prompt cache across turns, contexts above 32,768 tokens and a load with no GPU. See its [receipt draft](https://github.com/iammrduncan/tensorless/blob/main/docs/receipts/engine-v0.4.0/Inkling-2-Mini-LookAtMyQuant-12.8GB-p100.md).
 
 ## The quality checks were not repeated for this engine
 
@@ -29,11 +29,11 @@ Qwen3.8-27B-PN3's perplexity, needle recall and task screen were measured on the
 
 ## Little memory to spare
 
-With Qwen3.8-27B-PN3, the engine uses 15,381 MiB of the card's 16,269 MiB once it has read its first prompt, about 800 MiB more than engine-v0.1.0. Anything else on the card may not fit. North-Mini-Code-1.0 usually leaves more: 1,862 MiB free from its first prompt on. But in one run of engine-v0.4.0's release gate, its used memory rose by 864 MiB, to 15,273 MiB, at a chat turn that reused the prompt cache, and stayed there with 998 MiB free. The server did not fail. engine-v0.3.0's gate ran the same chat without it, it has not been reproduced, and its cause is not known ([receipt](https://github.com/iammrduncan/tensorless/blob/main/docs/receipts/engine-v0.4.0/North-Mini-Code-1.0-GGUF-p100.md#gpu-memory-in-run-1)).
+With Qwen3.8-27B-PN3, the engine uses 15,381 MiB of the card's 16,269 MiB once it has read its first prompt, about 800 MiB more than engine-v0.1.0. Anything else on the card may not fit. North-Mini-Code-1.0 usually leaves more: 1,840 MiB free from its first prompt on. But at a chat turn that reuses the prompt cache, its used memory can rise by 864 MiB and stay there: in engine-v0.4.1's release gate it rose to 15,295 MiB, with 976 MiB free. The server did not fail. engine-v0.4.0's image, run in the same hour on the same card, did the same, to 15,273 MiB, as it had in engine-v0.4.0's own gate, so the step has been there since engine-v0.4.0; engine-v0.3.0's gate ran the same chat without it. Its cause is not known ([receipt](https://github.com/iammrduncan/tensorless/blob/main/docs/receipts/engine-v0.4.1/North-Mini-Code-1.0-GGUF-p100.md#gpu-memory-at-the-chats-second-pass)).
 
 ## North-Mini-Code-1.0: the prompt cache can change its answers
 
-With the prompt cache on, a request that reuses a cached prompt can get a different greedy answer from the same request sent cold. In the release gate, a three-turn chat sent twice gave different answers on the two passes, and the same request sent twice with `cache_prompt` false gave the same text. The hill climb's judge found it too, for the champion and the candidates alike, so it is not new in engine-v0.3.0 or engine-v0.4.0. If you need the same answer for the same request, send it with `cache_prompt` false. The Qwen3.8-27B models gave the same answers both times.
+With the prompt cache on, a request that reuses a cached prompt can get a different greedy answer from the same request sent cold. In the release gate, a three-turn chat sent twice gave different answers on the two passes, and the same request sent twice with `cache_prompt` false gave the same text. The hill climb's judge found it too, for the champion and the candidates alike, so it is not new in engine-v0.3.0 or later releases. In engine-v0.4.1's gate, the chat's two passes gave the same token counts on engine-v0.4.1's image as on engine-v0.4.0's. If you need the same answer for the same request, send it with `cache_prompt` false. The Qwen3.8-27B models gave the same answers both times.
 
 ## North-Mini-Code-1.0 reasons before it answers
 

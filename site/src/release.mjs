@@ -24,17 +24,17 @@ export const recipes = walk(recipesDir)
 
 /** Versions and the measurements of the published image, as the receipts state them. */
 export const release = {
-  launcher: "0.4.0",
-  engine: "engine-v0.4.0",
-  image: "ghcr.io/iammrduncan/tensorless-engine:0.4.0-sm60",
-  digest: "sha256:4a0153230be9e2b5957a5aaf58cbb0ba1f79bfeb94eacd4617189f16ca35e997",
-  // tensorless bench on the published image, one Tesla P100-PCIE-16GB, 2026-11-24, with
-  // GGML_CUDA_SYNC_SCHED=auto as the recipes set it (docs/receipts/engine-v0.4.0/).
+  launcher: "0.4.1",
+  engine: "engine-v0.4.1",
+  image: "ghcr.io/iammrduncan/tensorless-engine:0.4.1-sm60",
+  digest: "sha256:c89e60b34a0f6098db20f2f2b43c78a93bb70192833cf7656b4a84ae8974346a",
+  // tensorless bench on the published image, one Tesla P100-PCIE-16GB, 2026-11-27, with
+  // GGML_CUDA_SYNC_SCHED=auto as the recipes set it (docs/receipts/engine-v0.4.1/).
   // North-Mini-Code-1.0's prompt was 411 tokens, the others' 429.
   measured: {
-    "iamMrDuncan/Qwen3.8-27B-PN3-GGUF": 30.46,
-    "iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF": 26.63,
-    "unsloth/North-Mini-Code-1.0-GGUF": 94.82,
+    "iamMrDuncan/Qwen3.8-27B-PN3-GGUF": 30.3,
+    "iamMrDuncan/Qwen3.8-27B-UD-IQ3_XXS-Q3Floor-GGUF": 26.62,
+    "unsloth/North-Mini-Code-1.0-GGUF": 94.87,
   },
   // The decode hill climb that produced engine-v0.1.0's PN kernels, the prefill hill climb that
   // produced engine-v0.2.0's, and the North-Mini-Code decode hill climb that produced engine-v0.3.0

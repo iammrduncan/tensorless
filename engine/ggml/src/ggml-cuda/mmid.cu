@@ -179,3 +179,42 @@ void ggml_cuda_launch_mm_ids_helper(
             break;
     }
 }
+
+// Lists the non-empty (expert, column tile) pairs of a batched MUL_MAT_ID, so the MMQ grid can launch only those tiles.
+// Each expert's columns are split into tiles of J; the tiles are ordered by expert, then by column tile.
+static __global__ void mm_ids_tile_list(
+        const int32_t * __restrict__ expert_bounds, int2 * __restrict__ tile_list, int32_t * __restrict__ tile_count,
+        const int n_experts, const int J) {
+    extern __shared__ int32_t tile_list_shared[];
+    int32_t * ntiles = tile_list_shared;             // number of column tiles per expert
+    int32_t * start  = tile_list_shared + n_experts; // index of the first list entry per expert
+
+    for (int expert = threadIdx.x; expert < n_experts; expert += blockDim.x) {
+        ntiles[expert] = (expert_bounds[expert + 1] - expert_bounds[expert] + J - 1) / J;
+    }
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        int32_t sum = 0;
+        for (int expert = 0; expert < n_experts; ++expert) {
+            start[expert] = sum;
+            sum += ntiles[expert];
+        }
+        *tile_count = sum;
+    }
+    __syncthreads();
+
+    for (int expert = threadIdx.x; expert < n_experts; expert += blockDim.x) {
+        for (int jt = 0; jt < ntiles[expert]; ++jt) {
+            tile_list[start[expert] + jt] = make_int2(expert, jt);
+        }
+    }
+}
+
+void ggml_cuda_launch_mm_ids_tile_list(
+        const int32_t * expert_bounds, int2 * tile_list, int32_t * tile_count, const int n_experts, const int J, cudaStream_t stream) {
+    const dim3 num_blocks(1, 1, 1);
+    const dim3 block_size(256, 1, 1);
+    const size_t nbytes_shared = 2*n_experts*sizeof(int32_t);
+    mm_ids_tile_list<<<num_blocks, block_size, nbytes_shared, stream>>>(expert_bounds, tile_list, tile_count, n_experts, J);
+}
